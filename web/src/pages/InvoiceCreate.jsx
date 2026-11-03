@@ -7,9 +7,9 @@ import { useAuth, useMoney } from '../auth.jsx';
 import { CancelButton, SubmitButton, useDebounced } from '../components/ui.jsx';
 
 const LEVELS = [
-  { value: 'selling', label: 'Selling Price (1)', field: 'selling_price' },
-  { value: 'top_customer', label: 'Top Customer Price (2)', field: 'top_customer_price' },
-  { value: 'jobber', label: 'Jobber Price (3)', field: 'jobber_price' },
+  { value: 'selling', label: 'Selling Price', field: 'selling_price' },
+  { value: 'top_customer', label: 'Top Customer Price', field: 'top_customer_price' },
+  { value: 'jobber', label: 'Jobber Price', field: 'jobber_price' },
 ];
 const today = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 const newRow = () => ({ key: crypto.randomUUID(), product: null, description: '', quantity: 1, rate: 0 });
@@ -97,8 +97,6 @@ export default function InvoiceCreate() {
   const { company } = useAuth();
   const money = useMoney();
   const [number, setNumber] = useState('');
-  const [hours, setHours] = useState(48);
-  const [expiryAction, setExpiryAction] = useState('delete');
   const [form, setForm] = useState({
     invoiceDate: today(),
     dueDate: '',
@@ -117,8 +115,6 @@ export default function InvoiceCreate() {
   useEffect(() => {
     api.get('/invoices/next-number').then((r) => {
       setNumber(r.data.invoiceNumber);
-      setHours(r.data.retentionHours);
-      setExpiryAction(r.data.expiryAction);
     }).catch(() => {});
   }, []);
 
@@ -223,11 +219,6 @@ export default function InvoiceCreate() {
                 <span className="ml-2 text-sm text-gray-700 capitalize">{s}</span>
               </label>
             ))}
-            <span className="text-xs text-gray-500 ml-auto">
-              {expiryAction === 'email'
-                ? `Kept for ${hours} hours, then emailed to your private archive address and deleted.`
-                : `Kept for ${hours} hours, then permanently deleted (no copy saved).`}
-            </span>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

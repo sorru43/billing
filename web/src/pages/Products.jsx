@@ -19,7 +19,7 @@ export default function Products() {
     can('products', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (p) => navigate(`/admin/products/edit/${p.id}`) },
     can('products', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
   ].filter(Boolean);
-  const headers = ['#', 'Product', 'Category', 'Cost', 'Selling (1)', 'Top Customer (2)', 'Jobber (3)', 'Qty', 'Status'];
+  const headers = ['#', 'Product', 'Category', 'Cost', 'Selling', 'Top Customer', 'Jobber', 'Qty', 'Status'];
   if (actions.length) headers.push('Actions');
 
   const toggleStatus = async (p, status) => {

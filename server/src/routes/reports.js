@@ -46,7 +46,7 @@ async function build(b, sym) {
     const revenue = rows.reduce((a, i) => a + i.total, 0);
     const paid = rows.filter((i) => i.status === 'paid').reduce((a, i) => a + i.total, 0);
     return {
-      subtitle: `Invoices ${b.from || 'any date'} → ${b.until || 'today'} (only invoices still inside the retention window)`,
+      subtitle: `Invoices ${b.from || 'any date'} → ${b.until || 'today'}`,
       summary: [
         { label: 'Invoices', value: rows.length },
         { label: 'Total Revenue', value: money(revenue) },
@@ -85,9 +85,9 @@ async function build(b, sym) {
         { key: 'name', label: 'Product', width: 26 },
         { key: 'barcode', label: 'Barcode', width: 14 },
         { key: 'category', label: 'Category', width: 14 },
-        { key: 'p1', label: 'Selling (1)', width: 12, align: 'right' },
-        { key: 'p2', label: 'Top Customer (2)', width: 13, align: 'right' },
-        { key: 'p3', label: 'Jobber (3)', width: 12, align: 'right' },
+        { key: 'p1', label: 'Selling', width: 12, align: 'right' },
+        { key: 'p2', label: 'Top Customer', width: 13, align: 'right' },
+        { key: 'p3', label: 'Jobber', width: 12, align: 'right' },
       ],
       rows: rows.map((p) => ({
         name: p.name, barcode: p.barcode || '', category: p.category_name || 'N/A',
@@ -116,7 +116,7 @@ async function build(b, sym) {
       { key: 'category', label: 'Category', width: 13 },
       { key: 'qty', label: 'Quantity', width: 9, align: 'right' },
       { key: 'cost', label: 'Cost', width: 11, align: 'right' },
-      { key: 'selling', label: 'Selling (1)', width: 11, align: 'right' },
+      { key: 'selling', label: 'Selling', width: 11, align: 'right' },
       { key: 'value', label: 'Stock Value', width: 12, align: 'right' },
     ],
     rows: rows.map((p) => ({
@@ -127,8 +127,7 @@ async function build(b, sym) {
 }
 
 r.get('/types', requirePerm('reports', 'view'), h(async (req, res) => {
-  const { archiveEmail } = await getSetting('email');
-  ok(res, { types: REPORT_TYPES, defaultRecipient: archiveEmail || req.user.email });
+  ok(res, { types: REPORT_TYPES, defaultRecipient: req.user.email });
 }));
 
 r.post('/send', requirePerm('reports', 'create'), h(async (req, res) => {

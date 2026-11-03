@@ -10,9 +10,9 @@ const RED = '#cc1f1a';
 const GRAY = '#4b5563';
 
 export const PRICE_LEVELS = {
-  selling: 'Selling Price (1)',
-  top_customer: 'Top Customer Price (2)',
-  jobber: 'Jobber Price (3)',
+  selling: 'Selling Price',
+  top_customer: 'Top Customer Price',
+  jobber: 'Jobber Price',
 };
 
 const money = (sym, n) =>
@@ -94,8 +94,7 @@ export async function invoicePdf(inv, company) {
   doc.font('body').fontSize(10).fillColor(GRAY)
     .text(`Invoice No: ${inv.invoice_number}`, L, 70, { width: W, align: 'right' })
     .text(`Invoice Date: ${fmtDate(inv.invoice_date)}`, { width: W, align: 'right' })
-    .text(`Due Date: ${fmtDate(inv.due_date)}`, { width: W, align: 'right' })
-    .text(`Price Level: ${PRICE_LEVELS[inv.price_level] || inv.price_level}`, { width: W, align: 'right' });
+    .text(`Due Date: ${fmtDate(inv.due_date)}`, { width: W, align: 'right' });
 
   const boxY = 140;
   doc.font('bold').fontSize(11).fillColor(RED).text('Bill From', L, boxY);

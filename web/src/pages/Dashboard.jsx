@@ -36,7 +36,6 @@ function Card({ title, icon, children }) {
   );
 }
 
-const hoursLeft = (d) => Math.max(0, Math.round((new Date(d) - Date.now()) / 36e5));
 
 export default function Dashboard() {
   const { user, can } = useAuth();
@@ -103,12 +102,6 @@ export default function Dashboard() {
             )}
           </div>
 
-          {data.invoices?.stuck > 0 && (
-            <div className="p-3 text-sm text-red-700 bg-red-100 border border-red-300 rounded-lg">
-              {data.invoices.stuck} invoice(s) are past their retention window but could not be emailed to the archive address, so they have not been deleted.
-              Check <Link to="/admin/settings/email-settings" className="underline font-semibold">Email Settings</Link>.
-            </div>
-          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {data.recentInvoices && (
@@ -119,14 +112,13 @@ export default function Dashboard() {
                     View all →
                   </Link>
                 </div>
-                {data.recentInvoices.length === 0 && <p className="text-sm text-gray-500">No invoices right now.</p>}
+                {data.recentInvoices.length === 0 && <p className="text-sm text-gray-500">No invoices yet.</p>}
                 {data.recentInvoices.map((i) => (
                   <Link key={i.id} to={`/admin/invoices/view/${i.id}`} className="flex justify-between items-center py-2 border-b border-gray-100 text-sm hover:bg-gray-50">
                     <span>
                       <span className="font-semibold text-gray-950">{i.invoice_number}</span> <span className="text-gray-500">· {i.customer_name}</span>
                     </span>
                     <span className="flex items-center gap-3">
-                      <span className="text-xs text-gray-400">{hoursLeft(i.expires_at)}h left</span>
                       <StatusBadge status={i.status} />
                       <span className="font-semibold text-gray-950">{money(i.total)}</span>
                     </span>

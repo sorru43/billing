@@ -13,8 +13,9 @@ export const config = {
   jwtSecret: required('JWT_SECRET'),
   settingsEncKey: required('SETTINGS_ENC_KEY'),
   publicOrigin: process.env.PUBLIC_ORIGIN || 'http://localhost:3710',
-  // Invoices are kept this long, then emailed to the archive address and deleted.
+  // Invoices are kept this long, then emailed to ARCHIVE_EMAIL and deleted.
   invoiceRetentionHours: Number(process.env.INVOICE_RETENTION_HOURS || 48),
+  archiveEmail: (process.env.ARCHIVE_EMAIL || '').trim().toLowerCase(),
   smtpDefaults: {
     host: process.env.SMTP_HOST || '',
     port: Number(process.env.SMTP_PORT || 465),

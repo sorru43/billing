@@ -13,7 +13,7 @@ const ICONS = {
   'price-list': <Tags size={20} />,
 };
 const DESCRIPTIONS = {
-  sales: 'Invoices in a date range with totals, paid and unpaid amounts. Covers invoices still inside the retention window.',
+  sales: 'Invoices in a date range with totals, paid and unpaid amounts.',
   inventory: 'Every product with quantity on hand and stock value at cost and selling price.',
   'low-stock': 'Products that are running low, below a threshold you choose.',
   'out-of-stock': 'Products with no stock left.',

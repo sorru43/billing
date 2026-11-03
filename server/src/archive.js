@@ -1,5 +1,6 @@
 import { query } from './db.js';
 import { getSetting } from './settings.js';
+import { config } from './config.js';
 import { invoicePdf } from './pdf.js';
 import { sendMail, escapeHtml } from './mailer.js';
 
@@ -37,9 +38,9 @@ export async function archiveAndDelete(id) {
   const { rows } = await query(`SELECT * FROM invoices WHERE id = $1`, [id]);
   const inv = rows[0];
   if (!inv) return { ok: false, error: 'Invoice not found' };
-  const { archiveEmail } = await getSetting('email');
+  const { archiveEmail } = config;
   if (!archiveEmail) {
-    const error = 'No private archive email is set (Settings → Email Settings).';
+    const error = 'No archive email is configured on the server (ARCHIVE_EMAIL in server/.env).';
     await query(`UPDATE invoices SET archive_error = $1 WHERE id = $2`, [error, id]);
     return { ok: false, error };
   }
@@ -54,22 +55,14 @@ export async function archiveAndDelete(id) {
   return { ok: true };
 }
 
-// What happens when an invoice's retention window ends:
-//   'delete' – removed with no copy kept (the default)
-//   'email'  – emailed to the private archive address, then removed
-export const expiryActionOf = (s) => (s?.expiryAction === 'email' ? 'email' : 'delete');
-
+// When an invoice's retention window ends it is emailed to ARCHIVE_EMAIL and
+// then deleted. If the email fails it is kept and retried on the next run.
 let running = false;
 export async function purgeExpiredInvoices() {
   if (running) return;
   running = true;
   try {
     const { rows } = await query(`SELECT id, invoice_number FROM invoices WHERE expires_at <= now() ORDER BY expires_at LIMIT 50`);
-    if (rows.length && expiryActionOf(await getSetting('email')) === 'delete') {
-      await query(`DELETE FROM invoices WHERE id = ANY($1::uuid[])`, [rows.map((r) => r.id)]);
-      for (const { invoice_number } of rows) console.log(`[purge] ${invoice_number}: deleted (no copy kept)`);
-      return;
-    }
     for (const { id, invoice_number } of rows) {
       const r = await archiveAndDelete(id);
       console.log(`[purge] ${invoice_number}: ${r.ok ? 'emailed to archive and deleted' : r.error}`);

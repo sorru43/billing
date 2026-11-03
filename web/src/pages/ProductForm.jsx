@@ -103,9 +103,9 @@ export default function ProductForm() {
             <input id="quantity" type="number" min="0" step="1" required value={form.quantity} onChange={set('quantity')} className={inputCls} />
           </Field>
           {money('cost', 'Cost')}
-          {money('selling_price', 'Selling Price (1)')}
-          {money('top_customer_price', 'Top Customer Price (2)')}
-          {money('jobber_price', 'Jobber Price (3)')}
+          {money('selling_price', 'Selling Price')}
+          {money('top_customer_price', 'Top Customer Price')}
+          {money('jobber_price', 'Jobber Price')}
           <Field label="Barcode" htmlFor="barcode" error={errors.barcode}>
             <div className="mt-1 flex">
               <input

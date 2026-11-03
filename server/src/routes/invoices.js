@@ -6,7 +6,7 @@ import { config } from '../config.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 import { getSetting } from '../settings.js';
 import { invoicePdf } from '../pdf.js';
-import { archiveAndDelete, invoiceEmail, expiryActionOf } from '../archive.js';
+import { invoiceEmail } from '../archive.js';
 
 const r = Router();
 const PRICE_FIELD = { selling: 'selling_price', top_customer: 'top_customer_price', jobber: 'jobber_price' };
@@ -47,8 +47,6 @@ const listOut = (i) => ({
   status: i.status,
   invoiceDate: i.invoice_date,
   createdAt: i.created_at,
-  expiresAt: i.expires_at,
-  archiveError: i.archive_error,
 });
 
 const fullOut = (i) => ({
@@ -79,30 +77,23 @@ r.get('/', requirePerm('invoices', 'view'), h(async (req, res) => {
   const params = search ? [likeEscape(search)] : [];
   const total = (await query(`SELECT count(*)::int n FROM invoices ${where}`, params)).rows[0].n;
   const { rows } = await query(`SELECT * FROM invoices ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`, params);
-  const emailSettings = await getSetting('email');
-  const expiryAction = expiryActionOf(emailSettings);
   ok(res, {
     invoices: rows.map(listOut),
     pagination: pagination(total, page, limit),
-    retentionHours: config.invoiceRetentionHours,
-    expiryAction,
-    archiveEmailSet: Boolean(emailSettings.archiveEmail),
   });
 }));
 
 r.get('/next-number', requirePerm('invoices', 'create'), h(async (req, res) => {
   ok(res, {
     invoiceNumber: await nextNumber(null, true),
-    retentionHours: config.invoiceRetentionHours,
-    expiryAction: expiryActionOf(await getSetting('email')),
   });
 }));
 
 r.get('/:id', requirePerm('invoices', 'view'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
-  if (!rows.length) return fail(res, 404, 'Invoice not found (it may have been archived and deleted)');
-  ok(res, { ...fullOut(rows[0]), expiryAction: expiryActionOf(await getSetting('email')) });
+  if (!rows.length) return fail(res, 404, 'Invoice not found');
+  ok(res, fullOut(rows[0]));
 }));
 
 r.get('/:id/pdf', requirePerm('invoices', 'view'), h(async (req, res) => {
@@ -194,22 +185,6 @@ r.post('/:id/email', requirePerm('invoices', 'view'), h(async (req, res) => {
     return fail(res, 502, `Could not send email: ${e.message}`);
   }
   ok(res, null, `Invoice emailed to ${to.data}`);
-}));
-
-// Email to the private archive address now, then delete.
-r.post('/:id/archive', requirePerm('invoices', 'delete'), h(async (req, res) => {
-  if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
-  const result = await archiveAndDelete(req.params.id);
-  if (!result.ok) return fail(res, 502, result.error);
-  ok(res, null, 'Invoice emailed to the private archive address and deleted');
-}));
-
-// Delete right away: no copy is kept or sent.
-r.delete('/:id', requirePerm('invoices', 'delete'), h(async (req, res) => {
-  if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
-  const { rowCount } = await query(`DELETE FROM invoices WHERE id=$1`, [req.params.id]);
-  if (!rowCount) return fail(res, 404, 'Invoice not found');
-  ok(res, null, 'Invoice deleted');
 }));
 
 export default r;

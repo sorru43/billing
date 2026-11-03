@@ -48,7 +48,6 @@ const MENU = [
     title: 'Settings',
     children: [
       { to: '/admin/settings/company-settings', title: 'Company Settings', slug: 'settings' },
-      { to: '/admin/settings/email-settings', title: 'Email Settings', slug: 'settings' },
       { to: '/admin/settings/profile', title: 'Profile', slug: null },
     ],
   },

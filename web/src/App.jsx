@@ -16,7 +16,7 @@ import Roles from './pages/Roles.jsx';
 import RolePermissions from './pages/RolePermissions.jsx';
 import Users from './pages/Users.jsx';
 import Reports from './pages/Reports.jsx';
-import { CompanySettings, EmailSettings, Profile } from './pages/Settings.jsx';
+import { CompanySettings, Profile } from './pages/Settings.jsx';
 
 function RequireAuth({ children }) {
   const { user, loading } = useAuth();
@@ -101,7 +101,6 @@ export default function App() {
             <Route path="users" element={g('users', <Users />)} />
             <Route path="reports" element={g('reports', <Reports />)} />
             <Route path="settings/company-settings" element={g('settings', <CompanySettings />)} />
-            <Route path="settings/email-settings" element={g('settings', <EmailSettings />)} />
             <Route path="settings/profile" element={<Profile />} />
             <Route path="unauthorized" element={<Unauthorized />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />

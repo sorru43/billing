@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { Archive, ArrowLeft, Download, Mail, Printer, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, Mail, Printer } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
-import { ConfirmModal, Loader, StatusBadge } from '../components/ui.jsx';
+import { Loader, StatusBadge } from '../components/ui.jsx';
 import EmailInvoiceModal from './EmailInvoiceModal.jsx';
-import { TimeLeft } from './Invoices.jsx';
 
-const LEVEL = { selling: 'Selling Price (1)', top_customer: 'Top Customer Price (2)', jobber: 'Jobber Price (3)' };
 const btn = 'flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-md cursor-pointer';
 
 export default function InvoiceView() {
@@ -19,8 +17,6 @@ export default function InvoiceView() {
   const [inv, setInv] = useState(null);
   const [error, setError] = useState('');
   const [emailing, setEmailing] = useState(false);
-  const [confirm, setConfirm] = useState(null);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     api.get(`/invoices/${id}`).then((r) => setInv(r.data)).catch((e) => setError(e.message));
@@ -37,17 +33,6 @@ export default function InvoiceView() {
     }
   };
 
-  const run = async () => {
-    setBusy(true);
-    try {
-      const r = confirm === 'archive' ? await api.post(`/invoices/${id}/archive`) : await api.del(`/invoices/${id}`);
-      toast.success(r.message);
-      navigate('/admin/invoices');
-    } catch (e) {
-      toast.error(e.message);
-      setBusy(false);
-    }
-  };
 
   if (error)
     return (
@@ -84,28 +69,9 @@ export default function InvoiceView() {
               Mark {inv.status === 'paid' ? 'Unpaid' : 'Paid'}
             </button>
           )}
-          {can('invoices', 'delete') && (
-            <>
-              <button onClick={() => setConfirm('archive')} className={`${btn} border border-gray-300 text-gray-700 hover:bg-gray-50`}>
-                <Archive size={16} /> Archive & Delete
-              </button>
-              <button onClick={() => setConfirm('delete')} className={`${btn} bg-red-600 text-white hover:bg-red-700`}>
-                <Trash2 size={16} /> Delete
-              </button>
-            </>
-          )}
         </div>
       </div>
 
-      <div className="p-3 text-sm bg-purple-50 border border-purple-200 rounded-md text-gray-700 no-print flex justify-between">
-        <span>
-          {inv.expiryAction === 'email'
-            ? 'This invoice will be emailed to the private archive address and deleted from the app in:'
-            : 'This invoice will be permanently deleted from the app (no copy kept) in:'}
-        </span>
-        <TimeLeft expiresAt={inv.expiresAt} error={inv.archiveError} />
-      </div>
-      {inv.archiveError && <div className="p-3 text-sm text-red-700 bg-red-100 border border-red-300 rounded-lg no-print">{inv.archiveError}</div>}
 
       <div className="bg-white border border-gray-200 rounded-lg p-6 md:p-8 space-y-6">
         <div className="flex justify-between items-start">
@@ -135,9 +101,6 @@ export default function InvoiceView() {
             </p>
             <p>
               <span className="font-semibold text-gray-950">Due Date:</span> {formatDate(inv.dueDate)}
-            </p>
-            <p>
-              <span className="font-semibold text-gray-950">Price Level:</span> {LEVEL[inv.priceLevel]}
             </p>
           </div>
         </div>
@@ -187,19 +150,6 @@ export default function InvoiceView() {
       </div>
 
       <EmailInvoiceModal invoice={emailing ? inv : null} onClose={() => setEmailing(false)} />
-      <ConfirmModal
-        isOpen={Boolean(confirm)}
-        onClose={() => setConfirm(null)}
-        onConfirm={run}
-        isDeleting={busy}
-        title={confirm === 'archive' ? 'Email to Archive & Delete' : 'Delete Invoice Now'}
-        confirmLabel={confirm === 'archive' ? 'Send & Delete' : 'Delete'}
-        message={
-          confirm === 'archive'
-            ? 'The invoice will be emailed to your private archive address and then permanently deleted from the app.'
-            : 'The invoice will be permanently deleted right away. No copy is kept or emailed.'
-        }
-      />
     </div>
   );
 }

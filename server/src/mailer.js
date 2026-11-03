@@ -2,8 +2,8 @@ import nodemailer from 'nodemailer';
 import { getSmtp, getSetting } from './settings.js';
 
 export async function sendMail({ to, subject, text, html, attachments }) {
-  const smtp = await getSmtp();
-  if (!smtp.host || !smtp.user) throw new Error('Email is not configured. Set it up in Settings → Email Settings.');
+  const smtp = getSmtp();
+  if (!smtp.host || !smtp.user) throw new Error('Email is not configured on the server (SMTP_* in server/.env).');
   const transport = nodemailer.createTransport({
     host: smtp.host,
     port: smtp.port,

@@ -19,11 +19,10 @@ r.get('/', requirePerm('dashboard', 'view'), h(async (req, res) => {
   if (can(req, 'categories', 'view')) data.categories = (await one(`SELECT count(*)::int total FROM categories`)).total;
   if (can(req, 'invoices', 'view')) {
     data.invoices = await one(`SELECT count(*)::int total, COALESCE(sum(total),0) amount,
-        COALESCE(sum(total) FILTER (WHERE status='paid'),0) paid,
-        count(*) FILTER (WHERE archive_error IS NOT NULL)::int stuck
+        COALESCE(sum(total) FILTER (WHERE status='paid'),0) paid
       FROM invoices`);
     data.recentInvoices = (await query(
-      `SELECT id, invoice_number, customer_name, total, status, expires_at FROM invoices ORDER BY created_at DESC LIMIT 5`,
+      `SELECT id, invoice_number, customer_name, total, status FROM invoices ORDER BY created_at DESC LIMIT 5`,
     )).rows;
   }
   if (can(req, 'users', 'view')) data.users = (await one(`SELECT count(*)::int total FROM users WHERE user_type=2`)).total;
