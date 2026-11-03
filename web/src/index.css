@@ -1,0 +1,22 @@
+@import "./vendor/finance.css";
+@import "tailwindcss";
+
+/* Same brand remap as the original app: "purple" utilities render the Wise red. */
+@theme {
+  --color-purple-50: #fdf2f2;
+  --color-purple-100: #fde8e8;
+  --color-purple-200: #fbd5d5;
+  --color-purple-300: #f8b4b4;
+  --color-purple-400: #f98080;
+  --color-purple-500: #e3342f;
+  --color-purple-600: #cc1f1a;
+  --color-purple-700: #b91c1c;
+  --color-purple-800: #991b1b;
+  --color-indigo-600: oklch(64.84% .187 258.73);
+}
+
+@media print {
+  aside, header, .no-print { display: none !important; }
+  main { overflow: visible !important; padding: 0 !important; }
+  .h-screen { height: auto !important; }
+}
