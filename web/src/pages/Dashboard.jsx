@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { Box, Calendar, CircleAlert, Clock, FolderTree, PackageX, ReceiptText, Users, Wallet } from 'lucide-react';
+import { Box, Calendar, CircleAlert, Clock, FolderTree, KeyRound, PackageX, ReceiptText, Users, Wallet } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
@@ -70,7 +70,15 @@ export default function Dashboard() {
             </span>
           </div>
         </div>
-        <img src="/static/dashboard-img.svg" alt="" className="hidden md:block h-24" />
+        <div className="flex items-center gap-4">
+          <img src="/static/dashboard-img.svg" alt="" className="hidden md:block h-24" />
+          <Link
+            to="/admin/settings/profile#change-login"
+            className="flex items-center gap-2 bg-white text-purple-600 font-semibold text-sm px-3 py-2 rounded-lg hover:bg-gray-100 transition whitespace-nowrap"
+          >
+            <KeyRound size={16} /> Change Login
+          </Link>
+        </div>
       </div>
 
       {!data ? (

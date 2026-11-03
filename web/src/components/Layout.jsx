@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import {
-  Box, ChartNoAxesColumn, ChevronDown, CircleUserRound, House, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
+  Box, ChartNoAxesColumn, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
 } from 'lucide-react';
 import { useAuth } from '../auth.jsx';
 
@@ -282,6 +282,15 @@ function Header({ toggleSidebar }) {
                 >
                   <UserRound className="w-4 h-4 mr-3 text-gray-400" />
                   Profile
+                </Link>
+                <Link
+                  to="/admin/settings/profile#change-login"
+                  onClick={() => setMenu(false)}
+                  className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 rounded-md mx-2 transition-colors duration-200"
+                  role="menuitem"
+                >
+                  <KeyRound className="w-4 h-4 mr-3 text-gray-400" />
+                  Change Login
                 </Link>
                 <button
                   onClick={logout}

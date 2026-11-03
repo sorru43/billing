@@ -90,4 +90,28 @@ r.put('/profile', requireAuth, h(async (req, res) => {
   ok(res, publicUser(rows[0]), 'Profile updated');
 }));
 
+const emailSchema = z.object({
+  email: z.string().trim().toLowerCase().email('Enter a valid email').max(200),
+  currentPassword: z.string().min(1, 'Current password is required'),
+});
+
+// Change the login email. Needs the current password, like a password change.
+r.put('/email', requireAuth, h(async (req, res) => {
+  const body = validate(emailSchema, req.body, res);
+  if (!body) return;
+  if (!(await bcrypt.compare(body.currentPassword, req.user.password_hash))) {
+    return fail(res, 422, 'Current password is incorrect', { emailPassword: 'Current password is incorrect' });
+  }
+  try {
+    const { rows } = await query(
+      `UPDATE users SET email = $1, updated_at = now() WHERE id = $2 RETURNING *`,
+      [body.email, req.user.id],
+    );
+    ok(res, publicUser(rows[0]), 'Login email updated');
+  } catch (e) {
+    if (e.code === '23505') return fail(res, 422, 'Email already in use', { email: 'Another user already has this email' });
+    throw e;
+  }
+}));
+
 export default r;

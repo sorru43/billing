@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import { api } from '../api.js';
+import { useLocation } from 'react-router';
 import { useAuth } from '../auth.jsx';
 import { Field, Loader, SubmitButton, inputCls } from '../components/ui.jsx';
 
@@ -76,8 +77,17 @@ export function Profile() {
   const { user, refresh } = useAuth();
   const [form, setForm] = useState({ firstName: user.firstName, lastName: user.lastName, phone: user.phone });
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const [login, setLogin] = useState({ email: user.email, currentPassword: '' });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState('');
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash === '#change-login') {
+      const el = document.getElementById('change-login');
+      el?.scrollIntoView({ behavior: 'smooth' });
+      document.getElementById('l-email')?.focus({ preventScroll: true });
+    }
+  }, [hash]);
 
   const saveProfile = async (e) => {
     e.preventDefault();
@@ -86,6 +96,22 @@ export function Profile() {
     try {
       await api.put('/auth/profile', form);
       toast.success('Profile updated');
+      refresh();
+    } catch (err) {
+      setErrors(err.errors || {});
+      toast.error(err.message);
+    } finally {
+      setSaving('');
+    }
+  };
+  const saveEmail = async (e) => {
+    e.preventDefault();
+    setErrors({});
+    setSaving('email');
+    try {
+      await api.put('/auth/email', login);
+      toast.success('Login email updated. Use the new email next time you sign in.');
+      setLogin((l) => ({ ...l, currentPassword: '' }));
       refresh();
     } catch (err) {
       setErrors(err.errors || {});
@@ -125,15 +151,24 @@ export function Profile() {
           <Field label="Last Name" htmlFor="p-last">
             <input id="p-last" maxLength={100} value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} className={inputCls} />
           </Field>
-          <Field label="Email" htmlFor="p-email">
-            <input id="p-email" value={user.email} disabled className={`${inputCls} bg-gray-50`} />
-          </Field>
           <Field label="Phone" htmlFor="p-phone">
             <input id="p-phone" maxLength={30} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={inputCls} />
           </Field>
         </div>
         <div className="flex justify-end">
           <SubmitButton isLoading={saving === 'profile'} mode="edit" />
+        </div>
+      </form>
+      <form id="change-login" onSubmit={saveEmail} className="bg-white p-6 rounded-lg border border-gray-200 space-y-4 scroll-mt-4">
+        <h3 className="text-xl font-bold text-gray-950">Change Login Email</h3>
+        <Field label="Login Email" required htmlFor="l-email" error={errors.email}>
+          <input id="l-email" type="email" required maxLength={200} autoComplete="username" value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} className={inputCls} />
+        </Field>
+        <Field label="Current Password" required htmlFor="l-cur" error={errors.emailPassword || errors.currentPassword}>
+          <input id="l-cur" type="password" required autoComplete="current-password" value={login.currentPassword} onChange={(e) => setLogin({ ...login, currentPassword: e.target.value })} className={inputCls} />
+        </Field>
+        <div className="flex justify-end">
+          <SubmitButton isLoading={saving === 'email'}>{saving === 'email' ? 'Saving...' : 'Update Email'}</SubmitButton>
         </div>
       </form>
       <form onSubmit={savePassword} className="bg-white p-6 rounded-lg border border-gray-200 space-y-4">
