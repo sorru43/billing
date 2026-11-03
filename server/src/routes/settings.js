@@ -19,7 +19,7 @@ const companySchema = z.object({
   email: z.string().trim().max(200).email('Enter a valid email').or(z.literal('')),
   phone: z.string().trim().max(30).default(''),
   address: z.string().trim().max(1000).default(''),
-  currencySymbol: z.string().trim().min(1).max(5).default('₹'),
+  currencySymbol: z.string().trim().min(1).max(5).default('$'),
   invoicePrefix: z.string().trim().min(1).max(10).regex(/^[A-Za-z0-9_\-/]+$/, 'Letters, numbers, _ - / only'),
 });
 

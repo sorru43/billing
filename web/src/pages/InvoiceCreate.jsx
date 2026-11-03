@@ -12,7 +12,7 @@ const LEVELS = [
   { value: 'jobber', label: 'Jobber Price (3)', field: 'jobber_price' },
 ];
 const today = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
-const newRow = () => ({ key: crypto.randomUUID(), product: null, quantity: 1, rate: 0, discount: 0, taxRate: 0 });
+const newRow = () => ({ key: crypto.randomUUID(), product: null, description: '', quantity: 1, rate: 0 });
 const round2 = (n) => Math.round(n * 100) / 100;
 
 const fieldCls =
@@ -98,6 +98,7 @@ export default function InvoiceCreate() {
   const money = useMoney();
   const [number, setNumber] = useState('');
   const [hours, setHours] = useState(48);
+  const [expiryAction, setExpiryAction] = useState('delete');
   const [form, setForm] = useState({
     invoiceDate: today(),
     dueDate: '',
@@ -117,6 +118,7 @@ export default function InvoiceCreate() {
     api.get('/invoices/next-number').then((r) => {
       setNumber(r.data.invoiceNumber);
       setHours(r.data.retentionHours);
+      setExpiryAction(r.data.expiryAction);
     }).catch(() => {});
   }, []);
 
@@ -134,18 +136,11 @@ export default function InvoiceCreate() {
   const lines = useMemo(
     () =>
       rows.map((r) => {
-        const gross = round2((Number(r.quantity) || 0) * (Number(r.rate) || 0));
-        const discount = Math.min(Number(r.discount) || 0, gross);
-        const tax = round2(((gross - discount) * (Number(r.taxRate) || 0)) / 100);
-        return { ...r, gross, discountApplied: discount, tax, amount: round2(gross - discount + tax) };
+        return { ...r, amount: round2((Number(r.quantity) || 0) * (Number(r.rate) || 0)) };
       }),
     [rows],
   );
-  const totals = lines.reduce(
-    (a, l) => ({ sub: a.sub + l.gross, disc: a.disc + l.discountApplied, tax: a.tax + l.tax }),
-    { sub: 0, disc: 0, tax: 0 },
-  );
-  const total = round2(totals.sub - totals.disc + totals.tax);
+  const total = round2(lines.reduce((a, l) => a + l.amount, 0));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -161,10 +156,9 @@ export default function InvoiceCreate() {
         ...form,
         items: filled.map((l) => ({
           productId: l.product.id,
+          description: l.description,
           quantity: Number(l.quantity),
           rate: Number(l.rate),
-          discount: Number(l.discount) || 0,
-          taxRate: Number(l.taxRate) || 0,
         })),
       });
       toast.success(`Invoice ${data.invoiceNumber} created`);
@@ -230,7 +224,9 @@ export default function InvoiceCreate() {
               </label>
             ))}
             <span className="text-xs text-gray-500 ml-auto">
-              Kept for {hours} hours, then emailed to your private archive address and deleted.
+              {expiryAction === 'email'
+                ? `Kept for ${hours} hours, then emailed to your private archive address and deleted.`
+                : `Kept for ${hours} hours, then permanently deleted (no copy saved).`}
             </span>
           </div>
 
@@ -275,12 +271,11 @@ export default function InvoiceCreate() {
               <table className="w-full text-sm min-w-[760px]">
                 <thead>
                   <tr className="bg-black text-white text-left">
-                    <th className="px-3 py-3 rounded-l-md">Product / Service</th>
+                    <th className="px-3 py-3 rounded-l-md w-64">Item</th>
+                    <th className="px-3 py-3">Description</th>
                     <th className="px-3 py-3 w-24">Quantity</th>
-                    <th className="px-3 py-3 w-32">Rate ({level.label.replace(/ \(\d\)/, '')})</th>
-                    <th className="px-3 py-3 w-28">Discount</th>
-                    <th className="px-3 py-3 w-24">Tax %</th>
-                    <th className="px-3 py-3 w-32 text-right">Amount</th>
+                    <th className="px-3 py-3 w-32">Price ($)</th>
+                    <th className="px-3 py-3 w-32 text-right">Total</th>
                     <th className="px-3 py-3 w-16 rounded-r-md">Action</th>
                   </tr>
                 </thead>
@@ -291,9 +286,19 @@ export default function InvoiceCreate() {
                         <ProductPicker
                           value={l.product}
                           error={errors[`${l.key}.productId`]}
-                          onPick={(p) => setRow(l.key, { product: p, rate: Number(p[level.field]) })}
+                          onPick={(p) => setRow(l.key, { product: p, rate: Number(p[level.field]), description: p.description || '' })}
                         />
                         {l.product && <p className="text-xs text-gray-500 mt-1">{l.product.quantity} in stock</p>}
+                      </td>
+                      <td className="px-3 py-3">
+                        <textarea
+                          rows={1}
+                          maxLength={1000}
+                          placeholder="Description"
+                          value={l.description}
+                          onChange={(e) => setRow(l.key, { description: e.target.value })}
+                          className="p-2 min-h-10 w-full border text-gray-700 text-sm border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-600 focus:border-purple-600"
+                        />
                       </td>
                       <td className="px-3 py-3">
                         <input
@@ -309,12 +314,6 @@ export default function InvoiceCreate() {
                       </td>
                       <td className="px-3 py-3">
                         <input type="number" min="0" step="0.01" value={l.rate} onChange={(e) => setRow(l.key, { rate: e.target.value })} className={smallCls} />
-                      </td>
-                      <td className="px-3 py-3">
-                        <input type="number" min="0" step="0.01" value={l.discount} onChange={(e) => setRow(l.key, { discount: e.target.value })} className={smallCls} />
-                      </td>
-                      <td className="px-3 py-3">
-                        <input type="number" min="0" max="100" step="0.01" value={l.taxRate} onChange={(e) => setRow(l.key, { taxRate: e.target.value })} className={smallCls} />
                       </td>
                       <td className="px-3 py-3 text-right font-bold text-gray-950 pt-5">{money(l.amount)}</td>
                       <td className="px-3 py-3 pt-5">
@@ -352,20 +351,8 @@ export default function InvoiceCreate() {
               />
             </div>
             <div className="bg-white p-4 rounded-lg border border-gray-200 space-y-2 text-sm self-start">
-              <div className="flex justify-between text-gray-700">
-                <span>Amount</span>
-                <span>{money(totals.sub)}</span>
-              </div>
-              <div className="flex justify-between text-gray-700">
-                <span>Tax</span>
-                <span>{money(totals.tax)}</span>
-              </div>
-              <div className="flex justify-between text-gray-700">
-                <span>Discount</span>
-                <span>- {money(totals.disc)}</span>
-              </div>
-              <div className="flex justify-between border-t border-gray-200 pt-2 text-lg font-bold text-gray-950">
-                <span>Total</span>
+              <div className="flex justify-between text-lg font-bold text-gray-950">
+                <span>Invoice Total</span>
                 <span>{money(total)}</span>
               </div>
             </div>

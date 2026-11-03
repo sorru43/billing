@@ -145,27 +145,23 @@ export default function InvoiceView() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-black text-white text-left">
-                <th className="px-3 py-2">#</th>
-                <th className="px-3 py-2">Product / Service</th>
-                <th className="px-3 py-2 text-right">Qty</th>
-                <th className="px-3 py-2 text-right">Rate</th>
-                <th className="px-3 py-2 text-right">Discount</th>
-                <th className="px-3 py-2 text-right">Tax</th>
-                <th className="px-3 py-2 text-right">Amount</th>
+                <th className="px-3 py-2">Item</th>
+                <th className="px-3 py-2">Description</th>
+                <th className="px-3 py-2 text-right">Quantity</th>
+                <th className="px-3 py-2 text-right">Price</th>
+                <th className="px-3 py-2 text-right">Total</th>
               </tr>
             </thead>
             <tbody>
               {inv.items.map((it, i) => (
                 <tr key={i} className="border-b border-gray-100">
-                  <td className="px-3 py-2 text-gray-600">{i + 1}</td>
                   <td className="px-3 py-2">
                     <p className="text-gray-950 font-medium">{it.name}</p>
                     {it.barcode && <p className="text-xs text-gray-500">{it.barcode}</p>}
                   </td>
+                  <td className="px-3 py-2 text-gray-600 whitespace-pre-line">{it.description}</td>
                   <td className="px-3 py-2 text-right">{it.quantity}</td>
                   <td className="px-3 py-2 text-right">{money(it.rate)}</td>
-                  <td className="px-3 py-2 text-right">{money(it.discount)}</td>
-                  <td className="px-3 py-2 text-right">{it.taxRate}%</td>
                   <td className="px-3 py-2 text-right font-semibold text-gray-950">{money(it.amount)}</td>
                 </tr>
               ))}
@@ -182,20 +178,8 @@ export default function InvoiceView() {
             )}
           </div>
           <div className="w-full md:w-72 text-sm space-y-2">
-            <div className="flex justify-between text-gray-700">
-              <span>Amount</span>
-              <span>{money(inv.subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-gray-700">
-              <span>Tax</span>
-              <span>{money(inv.taxTotal)}</span>
-            </div>
-            <div className="flex justify-between text-gray-700">
-              <span>Discount</span>
-              <span>- {money(inv.discountTotal)}</span>
-            </div>
-            <div className="flex justify-between border-t border-gray-200 pt-2 text-lg font-bold text-gray-950">
-              <span>Total</span>
+            <div className="flex justify-between border-t-2 border-gray-950 pt-2 text-lg font-bold text-gray-950">
+              <span>Invoice Total</span>
               <span>{money(inv.total)}</span>
             </div>
           </div>

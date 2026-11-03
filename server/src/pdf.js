@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets');
-const FONT = path.join(ASSETS, 'DejaVuSans.ttf'); // has the ₹ glyph, unlike built-in Helvetica
+const FONT = path.join(ASSETS, 'DejaVuSans.ttf'); // Unicode font, used for all PDF text
 const FONT_BOLD = path.join(ASSETS, 'DejaVuSans-Bold.ttf');
 const LOGO = path.join(ASSETS, 'wise-logo.png');
 const RED = '#cc1f1a';
@@ -16,7 +16,7 @@ export const PRICE_LEVELS = {
 };
 
 const money = (sym, n) =>
-  `${sym}${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  `${sym}${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '-';
 
@@ -84,7 +84,7 @@ function table(doc, { columns, rows, startY }) {
 }
 
 export async function invoicePdf(inv, company) {
-  const sym = company.currencySymbol || '₹';
+  const sym = '$';
   const doc = newDoc();
   const L = doc.page.margins.left;
   const W = doc.page.width - L - doc.page.margins.right;
@@ -113,21 +113,17 @@ export async function invoicePdf(inv, company) {
   y = table(doc, {
     startY: y,
     columns: [
-      { key: 'n', label: '#', width: 4 },
-      { key: 'name', label: 'Product / Service', width: 30 },
-      { key: 'quantity', label: 'Qty', width: 7, align: 'right' },
-      { key: 'rate', label: 'Rate', width: 13, align: 'right' },
-      { key: 'discount', label: 'Discount', width: 12, align: 'right' },
-      { key: 'tax', label: 'Tax %', width: 8, align: 'right' },
-      { key: 'amount', label: 'Amount', width: 15, align: 'right' },
+      { key: 'name', label: 'Item', width: 22 },
+      { key: 'description', label: 'Description', width: 33 },
+      { key: 'quantity', label: 'Quantity', width: 11, align: 'right' },
+      { key: 'rate', label: 'Price', width: 14, align: 'right' },
+      { key: 'amount', label: 'Total', width: 15, align: 'right' },
     ],
-    rows: inv.items.map((it, i) => ({
-      n: i + 1,
+    rows: inv.items.map((it) => ({
       name: it.barcode ? `${it.name}\n${it.barcode}` : it.name,
+      description: it.description || '',
       quantity: it.quantity,
       rate: money(sym, it.rate),
-      discount: money(sym, it.discount),
-      tax: `${it.taxRate}%`,
       amount: money(sym, it.amount),
     })),
   });
@@ -144,12 +140,9 @@ export async function invoicePdf(inv, company) {
     doc.text(value, sx + 110, y, { width: 120, align: 'right' });
     y += bold ? 22 : 17;
   };
-  line('Amount', money(sym, inv.subtotal));
-  line('Tax', money(sym, inv.tax_total));
-  line('Discount', `- ${money(sym, inv.discount_total)}`);
-  doc.moveTo(sx, y).lineTo(sx + 230, y).strokeColor('#e5e7eb').stroke();
-  y += 6;
-  line('Total', money(sym, inv.total), true);
+  doc.moveTo(sx, y).lineTo(sx + 230, y).lineWidth(1.5).strokeColor('#111111').stroke();
+  y += 8;
+  line('Invoice Total', money(sym, inv.total), true);
   doc.font('body').fontSize(10).fillColor(GRAY).text(`Status: ${String(inv.status).toUpperCase()}`, sx, y, { width: 230, align: 'right' });
 
   if (inv.notes) {

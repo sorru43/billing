@@ -28,7 +28,7 @@ const schema = z.object({
   threshold: z.coerce.number().int().min(0).max(1e6).default(5),
 });
 
-const n2 = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const n2 = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 async function build(b, sym) {
   const money = (n) => `${sym}${n2(n)}`;
@@ -135,7 +135,7 @@ r.post('/send', requirePerm('reports', 'create'), h(async (req, res) => {
   const b = validate(schema, req.body, res);
   if (!b) return;
   const company = await getSetting('company');
-  const report = await build(b, company.currencySymbol || '₹');
+  const report = await build(b, '$');
   const title = REPORT_TYPES[b.type];
   const pdf = await reportPdf({ title, company, ...report });
   const csv = toCsv(report.columns, report.rows);

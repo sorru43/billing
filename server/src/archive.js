@@ -3,11 +3,11 @@ import { getSetting } from './settings.js';
 import { invoicePdf } from './pdf.js';
 import { sendMail, escapeHtml } from './mailer.js';
 
-const fmt = (sym, n) => `${sym}${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmt = (sym, n) => `${sym}${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export async function invoiceEmail(inv, to, { archive }) {
   const company = await getSetting('company');
-  const sym = company.currencySymbol || '₹';
+  const sym = '$';
   const pdf = await invoicePdf(inv, company);
   const subject = archive
     ? `[Archive] Invoice ${inv.invoice_number} – ${inv.customer_name}`

@@ -42,10 +42,10 @@ export const useAuth = () => useContext(AuthContext);
 
 export function useMoney() {
   const { company } = useAuth();
-  const sym = company?.currencySymbol || '₹';
+  const sym = '$';
   return useCallback(
     (n, decimals = 2) =>
-      `${sym}${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`,
+      `${sym}${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`,
     [sym],
   );
 }

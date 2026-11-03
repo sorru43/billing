@@ -120,7 +120,7 @@ async function main() {
        ('company', $1), ('invoice', $2), ('email', $3)
      ON CONFLICT (key) DO NOTHING`,
     [
-      JSON.stringify({ companyName: 'Wise Hustlers', email: '', phone: '', address: '', currencySymbol: '₹' }),
+      JSON.stringify({ companyName: 'Wise Hustlers', email: '', phone: '', address: '', currencySymbol: '$' }),
       JSON.stringify({ prefix: 'INV_' }),
       JSON.stringify({ useCustomSmtp: false, archiveEmail: '' }),
     ],

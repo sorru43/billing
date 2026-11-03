@@ -28,6 +28,7 @@ const schema = z.object({
       z.object({
         productId: z.string().uuid('Select a product'),
         quantity: z.coerce.number().int('Whole numbers only').min(1, 'Quantity must be at least 1').max(1e6),
+        description: z.string().trim().max(1000).default(''),
         rate: z.coerce.number().min(0).max(1e11),
         discount: z.coerce.number().min(0).max(1e11).default(0),
         taxRate: z.coerce.number().min(0).max(100).default(0),
@@ -90,7 +91,11 @@ r.get('/', requirePerm('invoices', 'view'), h(async (req, res) => {
 }));
 
 r.get('/next-number', requirePerm('invoices', 'create'), h(async (req, res) => {
-  ok(res, { invoiceNumber: await nextNumber(null, true), retentionHours: config.invoiceRetentionHours });
+  ok(res, {
+    invoiceNumber: await nextNumber(null, true),
+    retentionHours: config.invoiceRetentionHours,
+    expiryAction: expiryActionOf(await getSetting('email')),
+  });
 }));
 
 r.get('/:id', requirePerm('invoices', 'view'), h(async (req, res) => {
@@ -142,7 +147,7 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
       const tax = round2((taxable * it.taxRate) / 100);
       subtotal += gross; discountTotal += discount; taxTotal += tax;
       return {
-        productId: p.id, name: p.name, barcode: p.barcode || '', quantity: it.quantity,
+        productId: p.id, name: p.name, barcode: p.barcode || '', description: it.description, quantity: it.quantity,
         listPrice: Number(p[PRICE_FIELD[b.priceLevel]]), rate: it.rate, discount, taxRate: it.taxRate, tax,
         amount: round2(taxable + tax),
       };

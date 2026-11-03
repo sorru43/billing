@@ -48,8 +48,8 @@ export function CompanySettings() {
             <input id="c-phone" maxLength={30} value={form.phone || ''} onChange={set('phone')} className={inputCls} />
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Currency Symbol" required htmlFor="c-cur" error={errors.currencySymbol}>
-              <input id="c-cur" required maxLength={5} value={form.currencySymbol || ''} onChange={set('currencySymbol')} className={inputCls} />
+            <Field label="Currency" htmlFor="c-cur">
+              <input id="c-cur" readOnly value="US Dollar ($)" className={`${inputCls} bg-gray-50`} />
             </Field>
             <Field label="Invoice Prefix" required htmlFor="c-prefix" error={errors.invoicePrefix}>
               <input id="c-prefix" required maxLength={10} value={form.invoicePrefix || ''} onChange={set('invoicePrefix')} className={inputCls} />
