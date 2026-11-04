@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
 import { CirclePlus, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
-import { useAuth, useMoney } from '../auth.jsx';
+import { useAuth, useMoney, Logo } from '../auth.jsx';
 import { CancelButton, SubmitButton, useDebounced } from '../components/ui.jsx';
 
 const LEVELS = [
@@ -92,9 +92,57 @@ function ProductPicker({ value, onPick, error }) {
   );
 }
 
+// Search saved customers and fill the Bill To block (and their default price level) in one click.
+function CustomerPicker({ onPick }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState([]);
+  const debounced = useDebounced(q, 200);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    api.get('/customers/options', { search: debounced }).then((r) => setResults(r.data)).catch(() => setResults([]));
+  }, [debounced, open]);
+  useEffect(() => {
+    const close = (e) => ref.current && !ref.current.contains(e.target) && setOpen(false);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  return (
+    <div className="relative sm:col-span-2" ref={ref}>
+      <input
+        className={smallCls}
+        placeholder="Search saved customers by name, company, email or phone..."
+        value={q}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => (setQ(e.target.value), setOpen(true))}
+      />
+      {open && (
+        <div className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
+          {results.length === 0 && <p className="px-3 py-2 text-sm text-gray-500">No saved customers found — type the details below</p>}
+          {results.map((c) => (
+            <button
+              type="button"
+              key={c.id}
+              onClick={() => (onPick(c), setQ(''), setOpen(false))}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 cursor-pointer"
+            >
+              <span className="text-gray-950 font-medium">{c.name}</span>
+              {c.company && <span className="text-gray-500"> · {c.company}</span>}
+              {(c.email || c.phone) && <span className="block text-xs text-gray-500">{[c.email, c.phone].filter(Boolean).join(' · ')}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function InvoiceCreate() {
   const navigate = useNavigate();
-  const { company } = useAuth();
+  const { company, can } = useAuth();
   const money = useMoney();
   const [number, setNumber] = useState('');
   const [form, setForm] = useState({
@@ -127,6 +175,12 @@ export default function InvoiceCreate() {
     const field = LEVELS.find((l) => l.value === value).field;
     setForm((f) => ({ ...f, priceLevel: value }));
     setRows((rs) => rs.map((r) => (r.product ? { ...r, rate: Number(r.product[field]) } : r)));
+  };
+
+  const pickCustomer = (c) => {
+    const address = [c.company, c.address, c.taxNumber && `Tax No: ${c.taxNumber}`].filter(Boolean).join('\n');
+    setForm((f) => ({ ...f, customerName: c.name, customerEmail: c.email, customerPhone: c.phone, customerAddress: address }));
+    if (c.priceLevel && c.priceLevel !== form.priceLevel) changeLevel(c.priceLevel);
   };
 
   const lines = useMemo(
@@ -180,7 +234,7 @@ export default function InvoiceCreate() {
         <div className="max-w-7xl mx-auto space-y-4 p-2">
           <div className="flex justify-between items-center mb-2">
             <h1 className="text-2xl font-bold text-gray-950 ">New Invoice</h1>
-            <img alt="" className="w-32" src="/static/wise-logo.svg" />
+            <Logo kind="invoice" alt="" />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 w-full">
             <div>
@@ -236,6 +290,7 @@ export default function InvoiceCreate() {
                 Bill To <span className="text-red-500">*</span>
               </h3>
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {(can('customers', 'view') || can('invoices', 'create')) && <CustomerPicker onPick={pickCustomer} />}
                 <div className="sm:col-span-2">
                   <input required maxLength={200} placeholder="Customer name *" value={form.customerName} onChange={set('customerName')} className={smallCls} />
                   {errors.customerName && <p className="text-xs text-red-600 mt-1">{errors.customerName}</p>}

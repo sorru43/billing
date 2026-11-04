@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import {
-  Box, ChartNoAxesColumn, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
+  Box, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
 } from 'lucide-react';
-import { useAuth } from '../auth.jsx';
+import { useAuth, Logo } from '../auth.jsx';
 
 const MENU = [
   { type: 'header', title: 'Main' },
@@ -19,6 +19,7 @@ const MENU = [
       { to: '/admin/categories', title: 'Categories', slug: 'categories' },
     ],
   },
+  { type: 'link', to: '/admin/customers', icon: <Contact size={16} />, title: 'Customers', slug: 'customers' },
   {
     type: 'link',
     to: '/admin/invoices',
@@ -100,7 +101,7 @@ function Sidebar({ isOpen }) {
           onClick={() => navigate('/admin')}
           className={`text-xl font-medium ml-2 text-gray-950 transition-opacity duration-200 whitespace-nowrap cursor-pointer ${isOpen ? 'opacity-100' : 'opacity-0'}`}
         >
-          <img src="/static/wise-logo.svg" alt="Logo" className="w-32" />
+          <Logo kind="dashboard" />
         </span>
       </div>
       <nav className="flex-1 px-3 py-2 overflow-y-auto">

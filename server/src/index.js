@@ -9,12 +9,14 @@ import { purgeExpiredInvoices } from './archive.js';
 import authRoutes from './routes/auth.js';
 import productRoutes from './routes/products.js';
 import categoryRoutes from './routes/categories.js';
+import customerRoutes from './routes/customers.js';
 import invoiceRoutes from './routes/invoices.js';
 import roleRoutes from './routes/roles.js';
 import userRoutes from './routes/users.js';
 import reportRoutes from './routes/reports.js';
 import settingsRoutes from './routes/settings.js';
 import dashboardRoutes from './routes/dashboard.js';
+import brandingRoutes from './routes/branding.js';
 
 const app = express();
 const WEB = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'web', 'dist');
@@ -47,10 +49,12 @@ app.use(cookieParser());
 const api = express.Router();
 api.use(csrfGuard);
 api.use('/auth', authRoutes);
+api.use('/branding', brandingRoutes); // public: logos
 api.use(requireAuth); // everything below needs a session
 api.use('/dashboard', dashboardRoutes);
 api.use('/products', productRoutes);
 api.use('/categories', categoryRoutes);
+api.use('/customers', customerRoutes);
 api.use('/invoices', invoiceRoutes);
 api.use('/roles', roleRoutes);
 api.use('/users', userRoutes);
@@ -73,7 +77,9 @@ app.use((req, res) => res.status(404).send('Not found'));
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed') return res.status(400).json({ success: false, message: 'Invalid JSON' });
-  if (err.type === 'entity.too.large') return res.status(413).json({ success: false, message: 'Request too large' });
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ success: false, message: req.path.includes('/logo/') ? 'Logo must be 1 MB or smaller' : 'Request too large' });
+  }
   console.error(err);
   res.status(500).json({ success: false, message: 'Something went wrong. Please try again.' });
 });

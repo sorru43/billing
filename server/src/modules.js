@@ -5,6 +5,7 @@ export const MODULE_GROUPS = [
     moduleName: 'Inventory & Sales',
     children: [
       { slug: 'products', moduleName: 'Products' },
+      { slug: 'customers', moduleName: 'Customers' },
       { slug: 'categories', moduleName: 'Categories' },
       { slug: 'invoices', moduleName: 'Invoices' },
     ],

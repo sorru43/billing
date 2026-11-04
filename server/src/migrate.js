@@ -92,6 +92,24 @@ CREATE TABLE IF NOT EXISTS invoices (
 );
 CREATE INDEX IF NOT EXISTS invoices_expires_idx ON invoices(expires_at);
 
+CREATE TABLE IF NOT EXISTS customers (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name         text NOT NULL,
+  company      text NOT NULL DEFAULT '',
+  email        text NOT NULL DEFAULT '',
+  phone        text NOT NULL DEFAULT '',
+  address      text NOT NULL DEFAULT '',
+  tax_number   text NOT NULL DEFAULT '',
+  price_level  text NOT NULL DEFAULT 'selling',      -- default price level for their invoices
+  notes        text NOT NULL DEFAULT '',
+  status       boolean NOT NULL DEFAULT true,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+-- Email is optional, but two customers cannot share one (it is the import match key).
+CREATE UNIQUE INDEX IF NOT EXISTS customers_email_uq ON customers (lower(email)) WHERE email <> '';
+CREATE INDEX IF NOT EXISTS customers_name_idx ON customers (lower(name));
+
 CREATE TABLE IF NOT EXISTS settings (
   key    text PRIMARY KEY,
   value  jsonb NOT NULL

@@ -13,15 +13,15 @@ export const setUnauthorizedHandler = (fn) => {
   onUnauthorized = fn;
 };
 
-async function request(method, url, body) {
+async function request(method, url, body, file) {
   const res = await fetch(`/api${url}`, {
     method,
     credentials: 'same-origin',
     headers: {
       'X-Requested-With': 'XMLHttpRequest',
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(file ? { 'Content-Type': file.type || 'application/octet-stream' } : body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: file || (body !== undefined ? JSON.stringify(body) : undefined),
   });
   let json = {};
   try {
@@ -45,4 +45,7 @@ export const api = {
   put: (url, body = {}) => request('PUT', url, body),
   patch: (url, body = {}) => request('PATCH', url, body),
   del: (url) => request('DELETE', url),
+  // Raw file body (e.g. logo upload).
+  upload: (url, file) => request('PUT', url, undefined, file),
+  send: (method, url, file) => request(method, url, undefined, file),
 };

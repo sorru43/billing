@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import Products from './pages/Products.jsx';
 import ProductForm from './pages/ProductForm.jsx';
 import Categories from './pages/Categories.jsx';
+import Customers from './pages/Customers.jsx';
 import Invoices from './pages/Invoices.jsx';
 import InvoiceCreate from './pages/InvoiceCreate.jsx';
 import InvoiceView from './pages/InvoiceView.jsx';
@@ -93,6 +94,7 @@ export default function App() {
             <Route path="products/new" element={g('products', <ProductForm />, 'create')} />
             <Route path="products/edit/:id" element={g('products', <ProductForm />, 'edit')} />
             <Route path="categories" element={g('categories', <Categories />)} />
+            <Route path="customers" element={g('customers', <Customers />)} />
             <Route path="invoices" element={g('invoices', <Invoices />)} />
             <Route path="invoices/create-invoice" element={g('invoices', <InvoiceCreate />, 'create')} />
             <Route path="invoices/view/:id" element={g('invoices', <InvoiceView />)} />
