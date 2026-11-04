@@ -102,7 +102,7 @@ export function csrfGuard(req, res, next) {
     return res.status(403).json({ success: false, message: 'Bad request origin' });
   }
   const origin = req.get('Origin');
-  if (origin && origin !== config.publicOrigin && config.env === 'production') {
+  if (origin && !config.allowedOrigins.includes(origin) && config.env === 'production') {
     return res.status(403).json({ success: false, message: 'Bad request origin' });
   }
   next();

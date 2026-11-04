@@ -13,6 +13,10 @@ export const config = {
   jwtSecret: required('JWT_SECRET'),
   settingsEncKey: required('SETTINGS_ENC_KEY'),
   publicOrigin: process.env.PUBLIC_ORIGIN || 'http://localhost:3710',
+  // Every origin allowed to make state-changing requests (comma-separated).
+  // Lets the old and new domains both work during a domain move.
+  allowedOrigins: (process.env.ALLOWED_ORIGINS || process.env.PUBLIC_ORIGIN || 'http://localhost:3710')
+    .split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean),
   // Invoices are kept this long, then emailed to ARCHIVE_EMAIL and deleted.
   invoiceRetentionHours: Number(process.env.INVOICE_RETENTION_HOURS || 48),
   archiveEmail: (process.env.ARCHIVE_EMAIL || '').trim().toLowerCase(),
