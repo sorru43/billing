@@ -5,6 +5,16 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [state, setState] = useState({ loading: true, user: null, permissions: {}, company: {} });
+  // Logo versions are public (the login page needs them), so they're tracked outside the session state.
+  const [logos, setLogos] = useState({ dashboard: null, invoice: null });
+  const refreshLogos = useCallback(async () => {
+    try {
+      const { data } = await api.get('/branding');
+      setLogos(data.logos);
+    } catch {
+      /* keep defaults */
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -18,7 +28,8 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     setUnauthorizedHandler(() => setState((s) => (s.user ? { loading: false, user: null, permissions: {}, company: {} } : s)));
     refresh();
-  }, [refresh]);
+    refreshLogos();
+  }, [refresh, refreshLogos]);
 
   const logout = useCallback(async () => {
     try {
@@ -34,7 +45,10 @@ export function AuthProvider({ children }) {
     [state.user, state.permissions],
   );
 
-  const value = useMemo(() => ({ ...state, refresh, logout, can }), [state, refresh, logout, can]);
+  const value = useMemo(
+    () => ({ ...state, refresh, logout, can, logos, refreshLogos }),
+    [state, refresh, logout, can, logos, refreshLogos],
+  );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
@@ -52,3 +66,17 @@ export function useMoney() {
 
 export const formatDate = (d) =>
   d ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00` : d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+
+// Custom logo if one is uploaded, else the bundled Wise logo.
+export const logoUrl = (kind, v) => (v ? `/api/branding/logo/${kind}?v=${v}` : '/static/wise-logo.svg');
+
+export function Logo({ kind, className = 'w-32', alt = 'Logo' }) {
+  const { logos } = useAuth();
+  const v = logos?.[kind];
+  // Custom logos keep their aspect ratio inside the same footprint as the default.
+  return v ? (
+    <img src={logoUrl(kind, v)} alt={alt} className={`${className} h-auto max-h-14 object-contain object-left`} />
+  ) : (
+    <img src={logoUrl(kind)} alt={alt} className={className} />
+  );
+}

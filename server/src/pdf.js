@@ -1,12 +1,24 @@
 import PDFDocument from 'pdfkit';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getLogo } from './logos.js';
 
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets');
 const FONT = path.join(ASSETS, 'DejaVuSans.ttf'); // Unicode font, used for all PDF text
 const FONT_BOLD = path.join(ASSETS, 'DejaVuSans-Bold.ttf');
 const LOGO = path.join(ASSETS, 'wise-logo.png');
 const RED = '#cc1f1a';
+
+// The custom invoice logo if one is set (fitted into a box so wide logos don't overlap the title).
+async function drawLogo(doc, x, y, h) {
+  try {
+    const custom = await getLogo('invoice');
+    if (custom) return void doc.image(custom.buffer, x, y, { fit: [h * 4.5, h] });
+  } catch (e) {
+    console.error('invoice logo failed, using default:', e.message);
+  }
+  doc.image(LOGO, x, y, { height: h });
+}
 const GRAY = '#4b5563';
 
 export const PRICE_LEVELS = {
@@ -89,7 +101,7 @@ export async function invoicePdf(inv, company) {
   const L = doc.page.margins.left;
   const W = doc.page.width - L - doc.page.margins.right;
 
-  doc.image(LOGO, L, 36, { height: 44 });
+  await drawLogo(doc, L, 36, 44);
   doc.font('bold').fontSize(22).fillColor('#111111').text('INVOICE', L, 40, { width: W, align: 'right' });
   doc.font('body').fontSize(10).fillColor(GRAY)
     .text(`Invoice No: ${inv.invoice_number}`, L, 70, { width: W, align: 'right' })
@@ -155,7 +167,7 @@ export async function reportPdf({ title, subtitle, summary, columns, rows, compa
   const doc = newDoc('landscape');
   const L = doc.page.margins.left;
   const W = doc.page.width - L - doc.page.margins.right;
-  doc.image(LOGO, L, 30, { height: 36 });
+  await drawLogo(doc, L, 30, 36);
   doc.font('bold').fontSize(18).fillColor('#111111').text(title, L, 34, { width: W, align: 'right' });
   doc.font('body').fontSize(9).fillColor(GRAY)
     .text(subtitle, L, 58, { width: W, align: 'right' })

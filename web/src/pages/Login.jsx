@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { Eye, EyeOff } from 'lucide-react';
 import { api } from '../api.js';
-import { useAuth } from '../auth.jsx';
+import { useAuth, Logo } from '../auth.jsx';
 
 // Same look as the original login page, minus the publicly displayed demo credentials.
 export default function Login() {
@@ -39,7 +39,7 @@ export default function Login() {
     <div className="flex items-center justify-center min-h-screen bg-gray-50 px-4">
       <div className="w-full max-w-md p-6 md:p-8 bg-white rounded-xl shadow-md space-y-6">
         <div className="flex items-center justify-center gap-2">
-          <img src="/static/wise-logo.svg" alt="Logo" className="w-32" />
+          <Logo kind="dashboard" />
         </div>
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900">Welcome Back</h1>

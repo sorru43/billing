@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { api } from '../api.js';
 import { useLocation } from 'react-router';
-import { useAuth } from '../auth.jsx';
+import { useAuth, logoUrl } from '../auth.jsx';
 import { Field, Loader, SubmitButton, inputCls } from '../components/ui.jsx';
 
 export function CompanySettings() {
@@ -35,6 +35,7 @@ export function CompanySettings() {
 
   if (!form) return <Loader className="h-64" />;
   return (
+    <div className="space-y-4">
     <div className="bg-white p-6 rounded-lg border border-gray-200">
       <h3 className="text-xl font-bold text-gray-950 mb-6">Company Settings</h3>
       <form onSubmit={save} className="space-y-4">
@@ -69,6 +70,96 @@ export function CompanySettings() {
           </div>
         )}
       </form>
+    </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <LogoCard
+          kind="dashboard"
+          title="Dashboard Logo"
+          hint="Shown in the sidebar and on the sign-in page. PNG, JPG or WebP, up to 1 MB."
+          accept="image/png,image/jpeg,image/webp"
+          editable={editable}
+        />
+        <LogoCard
+          kind="invoice"
+          title="Invoice Logo"
+          hint="Shown on invoices, invoice PDFs and emailed report PDFs. PNG or JPG, up to 1 MB."
+          accept="image/png,image/jpeg"
+          editable={editable}
+        />
+      </div>
+    </div>
+  );
+}
+
+function LogoCard({ kind, title, hint, accept, editable }) {
+  const { logos, refreshLogos } = useAuth();
+  const v = logos?.[kind];
+  const [busy, setBusy] = useState('');
+  const fileRef = useRef(null);
+
+  const upload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 1024 * 1024) return toast.error('Logo must be 1 MB or smaller');
+    setBusy('upload');
+    try {
+      await api.upload(`/settings/logo/${kind}`, file);
+      await refreshLogos();
+      toast.success(`${title} updated`);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+  const reset = async () => {
+    if (!window.confirm(`Reset the ${title.toLowerCase()} to the default?`)) return;
+    setBusy('reset');
+    try {
+      await api.del(`/settings/logo/${kind}`);
+      await refreshLogos();
+      toast.success(`${title} reset to default`);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-lg border border-gray-200 space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xl font-bold text-gray-950">{title}</h3>
+        <span className="text-xs text-gray-500">{v ? 'Custom' : 'Default'}</span>
+      </div>
+      <div className="flex items-center justify-center h-28 rounded-md border border-dashed border-gray-300 bg-gray-50 p-4">
+        <img src={logoUrl(kind, v)} alt={`${title} preview`} className="max-h-20 max-w-full object-contain" />
+      </div>
+      <p className="text-xs text-gray-500">{hint}</p>
+      {editable && (
+        <div className="flex justify-end gap-2">
+          {v && (
+            <button
+              type="button"
+              onClick={reset}
+              disabled={!!busy}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+            >
+              {busy === 'reset' ? 'Resetting...' : 'Reset to Default'}
+            </button>
+          )}
+          <input ref={fileRef} type="file" accept={accept} className="hidden" onChange={upload} />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={!!busy}
+            className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:opacity-50"
+          >
+            {busy === 'upload' ? 'Uploading...' : v ? 'Change Logo' : 'Upload Logo'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
 import { ArrowLeft, Download, Mail, Printer } from 'lucide-react';
 import { api } from '../api.js';
-import { useAuth, useMoney, formatDate } from '../auth.jsx';
+import { useAuth, useMoney, formatDate, Logo } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
 import EmailInvoiceModal from './EmailInvoiceModal.jsx';
 
@@ -75,7 +75,7 @@ export default function InvoiceView() {
 
       <div className="bg-white border border-gray-200 rounded-lg p-6 md:p-8 space-y-6">
         <div className="flex justify-between items-start">
-          <img src="/static/wise-logo.svg" alt="Logo" className="w-36" />
+          <Logo kind="invoice" className="w-36" />
           <div className="text-right">
             <h1 className="text-2xl font-bold text-gray-950">INVOICE</h1>
             <p className="text-sm text-gray-600">{inv.invoiceNumber}</p>
