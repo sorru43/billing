@@ -17,7 +17,14 @@ export default function Categories() {
 
   const actions = [
     can('categories', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (c) => (setErrors({}), setEditing(c)) },
-    can('categories', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
+    can('categories', 'delete') && {
+      label: 'Delete',
+      icon: <Trash2 size={14} />,
+      onClick: (c) =>
+        c.productCount
+          ? toast.error(`This category has ${c.productCount} product(s). Move them to another category or delete them first.`)
+          : setToDelete(c),
+    },
   ].filter(Boolean);
   const headers = ['#', 'Category Name', 'Slug', 'Products', 'Created On', 'Status'];
   if (actions.length) headers.push('Actions');
@@ -117,11 +124,7 @@ export default function Categories() {
         isOpen={Boolean(toDelete)}
         onClose={() => setToDelete(null)}
         onConfirm={remove}
-        message={
-          toDelete?.productCount
-            ? `This category has ${toDelete.productCount} product(s). They will be kept but left without a category.`
-            : 'Are you sure you want to delete this category?'
-        }
+        message="Are you sure you want to delete this category?"
         isDeleting={deleting}
       />
     </div>

@@ -81,8 +81,17 @@ r.put('/:id', requirePerm('categories', 'edit'), h(async (req, res) => {
 
 r.delete('/:id', requirePerm('categories', 'delete'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Category not found');
-  const { rowCount } = await query(`DELETE FROM categories WHERE id=$1`, [req.params.id]);
-  if (!rowCount) return fail(res, 404, 'Category not found');
+  // A category still used by products cannot be deleted (checked in the same
+  // statement so a product added meanwhile cannot slip through).
+  const { rowCount } = await query(
+    `DELETE FROM categories c WHERE c.id=$1 AND NOT EXISTS (SELECT 1 FROM products p WHERE p.category_id = c.id)`,
+    [req.params.id],
+  );
+  if (!rowCount) {
+    const { rows } = await query(`SELECT (SELECT count(*)::int FROM products WHERE category_id=$1) AS n, EXISTS (SELECT 1 FROM categories WHERE id=$1) AS found`, [req.params.id]);
+    if (!rows[0].found) return fail(res, 404, 'Category not found');
+    return fail(res, 409, `This category has ${rows[0].n} product(s). Move them to another category or delete them first.`);
+  }
   ok(res, null, 'Category deleted');
 }));
 

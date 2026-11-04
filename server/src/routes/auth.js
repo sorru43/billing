@@ -1,9 +1,12 @@
 import { Router } from 'express';
+import { logoVersions } from '../logos.js';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { query } from '../db.js';
-import { issueSession, clearSession, publicUser, requireAuth } from '../auth.js';
+import jwt from 'jsonwebtoken';
+import { config } from '../config.js';
+import { COOKIE, issueSession, clearSession, publicUser, requireAuth } from '../auth.js';
 import { h, ok, fail, validate } from '../http.js';
 import { getSetting } from '../settings.js';
 
@@ -43,15 +46,24 @@ r.post('/login', loginLimiter, h(async (req, res) => {
   ok(res, { user: publicUser(user) }, 'Login successful');
 }));
 
-r.post('/logout', (req, res) => {
+// Logout revokes the token on the server (token_version bump), so a copied
+// session cookie stops working too. This signs the user out on every device.
+r.post('/logout', h(async (req, res) => {
+  const token = req.cookies?.[COOKIE];
+  if (token) {
+    try {
+      const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
+      await query(`UPDATE users SET token_version = token_version + 1 WHERE id = $1 AND token_version = $2`, [payload.sub, payload.v]);
+    } catch { /* expired or invalid token: nothing to revoke */ }
+  }
   clearSession(res);
   ok(res, null, 'Logged out');
-});
+}));
 
 // Current user, permissions, and the app-wide display settings the UI needs.
 r.get('/me', requireAuth, h(async (req, res) => {
   const company = await getSetting('company');
-  ok(res, { user: publicUser(req.user), permissions: req.permissions, company });
+  ok(res, { user: publicUser(req.user), permissions: req.permissions, company, logos: await logoVersions() });
 }));
 
 const passwordSchema = z.object({
