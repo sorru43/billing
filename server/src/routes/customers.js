@@ -52,6 +52,12 @@ r.get('/options', h(async (req, res) => {
   ok(res, rows.map(out));
 }));
 
+const LEVEL_LABELS = {
+  selling: 'Selling Price',
+  top_customer: 'Top Customer Price',
+  jobber: 'Jobber Price',
+};
+
 const EXPORT_COLUMNS = [
   { key: 'name', label: 'Name' }, { key: 'company', label: 'Company' }, { key: 'email', label: 'Email' },
   { key: 'phone', label: 'Phone' }, { key: 'address', label: 'Address' }, { key: 'taxNumber', label: 'Tax Number' },
@@ -60,7 +66,11 @@ const EXPORT_COLUMNS = [
 
 r.get('/export', requirePerm('customers', 'view'), h(async (req, res) => {
   const { rows } = await query(`SELECT * FROM customers ORDER BY name`);
-  const csv = toCsv(EXPORT_COLUMNS, rows.map((c) => ({ ...out(c), statusText: c.status ? 'Active' : 'Inactive' })));
+  const csv = toCsv(EXPORT_COLUMNS, rows.map((c) => ({
+    ...out(c),
+    priceLevel: LEVEL_LABELS[c.price_level] || c.price_level,
+    statusText: c.status ? 'Active' : 'Inactive',
+  })));
   res.set('Content-Type', 'text/csv; charset=utf-8');
   res.set('Content-Disposition', `attachment; filename="customers-${new Date().toISOString().slice(0, 10)}.csv"`);
   res.send('﻿' + csv); // BOM so Excel opens UTF-8 correctly

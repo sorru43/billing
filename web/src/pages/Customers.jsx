@@ -7,6 +7,7 @@ import {
   Avatar, CancelButton, ConfirmModal, Field, ListToolbar, Modal, PageHeader, Pagination, Row, SubmitButton, Table, TableState, Toggle, inputCls,
 } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
+import { fileToCsv, downloadCustomersTemplate } from '../spreadsheet.js';
 
 export const PRICE_LEVELS = [
   { value: 'selling', label: 'Selling Price' },
@@ -18,32 +19,7 @@ const EMPTY = { name: '', company: '', email: '', phone: '', address: '', taxNum
 const btnCls =
   'border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 px-2 py-1 rounded-md shadow-sm cursor-pointer flex items-center gap-2 text-sm';
 
-// ---- spreadsheet helpers (Excel files are turned into CSV text; the server does all validation)
-const csvCell = (v) => {
-  let s = v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-async function fileToCsv(file) {
-  if (/\.xlsx$/i.test(file.name)) {
-    const { readSheet } = await import('read-excel-file/browser');
-    const rows = await readSheet(file);
-    return rows.map((r) => r.map(csvCell).join(',')).join('\n');
-  }
-  if (/\.xls$/i.test(file.name)) throw new Error('Old .xls files are not supported. In Excel choose File → Save As → .xlsx or .csv.');
-  return file.text();
-}
-function downloadTemplate() {
-  const csv =
-    'Name,Company,Email,Phone,Address,Tax Number,Price Level,Notes,Status\n' +
-    'John Smith,Smith Trading LLC,john@example.com,+971 50 123 4567,"Office 12, Business Bay, Dubai",100123456700003,Selling,Pays by card,Active\n';
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
-  a.download = 'customers-template.csv';
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-function ImportModal({ isOpen, onClose, onDone }) {
+export function CustomerImportModal({ isOpen, onClose, onDone }) {
   const { can } = useAuth();
   const fileRef = useRef(null);
   const [file, setFile] = useState(null);
@@ -101,8 +77,8 @@ function ImportModal({ isOpen, onClose, onDone }) {
             <b>Name</b> (required, or First Name + Last Name), Company, Email, Phone, Address, Tax Number, Price Level (Selling / Top Customer / Jobber), Notes, Status.
           </p>
           <p>Existing customers are matched by email (or by name + phone when there is no email). Up to 5,000 rows per file.</p>
-          <button type="button" onClick={downloadTemplate} className="text-purple-600 hover:underline cursor-pointer inline-flex items-center gap-1">
-            <Download size={14} /> Download template
+          <button type="button" onClick={downloadCustomersTemplate} className="text-purple-600 hover:underline cursor-pointer inline-flex items-center gap-1 font-medium mt-1">
+            <Download size={14} /> Download template (.csv)
           </button>
         </div>
 
@@ -351,7 +327,7 @@ export default function Customers() {
           </form>
         )}
       </Modal>
-      <ImportModal isOpen={importing} onClose={() => setImporting(false)} onDone={list.reload} />
+      <CustomerImportModal isOpen={importing} onClose={() => setImporting(false)} onDone={list.reload} />
       <ConfirmModal
         isOpen={Boolean(toDelete)}
         onClose={() => setToDelete(null)}

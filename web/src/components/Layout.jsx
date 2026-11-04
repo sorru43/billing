@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import {
-  Box, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
+  ArrowDownUp, Box, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
 } from 'lucide-react';
 import { useAuth, Logo } from '../auth.jsx';
 
@@ -27,6 +27,14 @@ const MENU = [
     title: 'Invoices',
     slug: 'invoices',
     addPath: '/admin/invoices/create-invoice',
+  },
+  {
+    type: 'link',
+    to: '/admin/import-export',
+    icon: <ArrowDownUp size={16} />,
+    title: 'Import / Export',
+    slug: null,
+    check: (can) => can('products') || can('customers'),
   },
   { type: 'header', title: 'Roles & Permissions' },
   {
@@ -72,7 +80,10 @@ function Sidebar({ isOpen }) {
 
   const items = useMemo(() => {
     const visible = MENU.map((item) => {
-      if (item.type === 'link') return can(item.slug) ? item : null;
+      if (item.type === 'link') {
+        if (item.check) return item.check(can) ? item : null;
+        return can(item.slug) ? item : null;
+      }
       if (item.type === 'collapsible') {
         const children = item.children.filter((c) => !c.slug || can(c.slug));
         return children.length ? { ...item, children } : null;

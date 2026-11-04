@@ -17,6 +17,7 @@ import Roles from './pages/Roles.jsx';
 import RolePermissions from './pages/RolePermissions.jsx';
 import Users from './pages/Users.jsx';
 import Reports from './pages/Reports.jsx';
+import ImportExport from './pages/ImportExport.jsx';
 import { CompanySettings, Profile } from './pages/Settings.jsx';
 
 function RequireAuth({ children }) {
@@ -28,9 +29,10 @@ function RequireAuth({ children }) {
 }
 
 // UI gate only; the API enforces the same permission on every request.
-function Guard({ slug, action = 'view', children }) {
+function Guard({ slug, action = 'view', check, children }) {
   const { can } = useAuth();
-  return can(slug, action) ? children : <Navigate to="/admin/unauthorized" replace />;
+  const allowed = check ? check(can) : can(slug, action);
+  return allowed ? children : <Navigate to="/admin/unauthorized" replace />;
 }
 
 // Staff without dashboard access land on the first page they can open.
@@ -98,6 +100,14 @@ export default function App() {
             <Route path="invoices" element={g('invoices', <Invoices />)} />
             <Route path="invoices/create-invoice" element={g('invoices', <InvoiceCreate />, 'create')} />
             <Route path="invoices/view/:id" element={g('invoices', <InvoiceView />)} />
+            <Route
+              path="import-export"
+              element={
+                <Guard check={(can) => can('products') || can('customers')}>
+                  <ImportExport />
+                </Guard>
+              }
+            />
             <Route path="roles" element={g('roles', <Roles />)} />
             <Route path="roles/permissions/:id" element={g('roles', <RolePermissions />)} />
             <Route path="users" element={g('users', <Users />)} />

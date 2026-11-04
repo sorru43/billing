@@ -1,8 +1,10 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { z } from 'zod';
-import { query } from '../db.js';
+import { query, tx } from '../db.js';
 import { requirePerm, can } from '../auth.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
+import { toCsv } from '../pdf.js';
+import { parseCsv } from './customers.js';
 
 const r = Router();
 
@@ -69,6 +71,384 @@ r.get('/search', h(async (req, res) => {
     [q, likeEscape(q)],
   );
   ok(res, rows.map(out));
+}));
+
+const MAX_IMPORT_ROWS = 5000;
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const HEADER_ALIASES = {
+  name: ['name', 'productname', 'product', 'item', 'itemname', 'title'],
+  category: ['category', 'categoryname', 'cat', 'group', 'productcategory'],
+  barcode: ['barcode', 'sku', 'code', 'upc', 'ean', 'productcode', 'itemcode', 'barcodeno'],
+  cost: ['cost', 'costprice', 'purchaseprice', 'buyprice', 'unitcost'],
+  sellingPrice: ['sellingprice', 'selling', 'price', 'retailprice', 'saleprice', 'unitprice'],
+  topCustomerPrice: ['topcustomerprice', 'topcustomer', 'topcustomerprice2', 'pricelevel2', 'vip', 'vipprice', 'wholesaleprice', 'wholesale'],
+  jobberPrice: ['jobberprice', 'jobber', 'jobberprice3', 'pricelevel3', 'dealerprice', 'dealer', 'trade', 'tradeprice'],
+  quantity: ['quantity', 'qty', 'stock', 'inventory', 'count', 'units'],
+  description: ['description', 'desc', 'details', 'notes'],
+  status: ['status', 'active', 'state'],
+};
+const ALIAS_TO_FIELD = Object.fromEntries(
+  Object.entries(HEADER_ALIASES).flatMap(([f, as]) => as.map((a) => [a, f]))
+);
+
+const parseStatus = (v) => !['inactive', 'disabled', 'no', 'false', '0', 'n', 'off'].includes(norm(v));
+const clean = (v) => String(v ?? '').replace(/^'(?=[=+\-@])/, '').trim();
+
+const parseNum = (v, def = 0) => {
+  if (v === undefined || v === null || String(v).trim() === '') return def;
+  const cleaned = String(v).replace(/[^0-9.-]/g, '');
+  if (!cleaned) return def;
+  const n = Number(cleaned);
+  return isNaN(n) ? null : n;
+};
+
+const parseIntNum = (v, def = 0) => {
+  if (v === undefined || v === null || String(v).trim() === '') return def;
+  const cleaned = String(v).replace(/[^0-9.-]/g, '');
+  if (!cleaned) return def;
+  const n = parseInt(cleaned, 10);
+  return isNaN(n) ? null : n;
+};
+
+const slugify = (text) =>
+  String(text || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'cat';
+
+const EXPORT_COLUMNS = [
+  { key: 'name', label: 'Product Name' },
+  { key: 'category_name', label: 'Category' },
+  { key: 'barcode', label: 'Barcode' },
+  { key: 'cost', label: 'Cost' },
+  { key: 'selling_price', label: 'Selling Price' },
+  { key: 'top_customer_price', label: 'Top Customer Price' },
+  { key: 'jobber_price', label: 'Jobber Price' },
+  { key: 'quantity', label: 'Quantity' },
+  { key: 'description', label: 'Description' },
+  { key: 'statusText', label: 'Status' },
+];
+
+r.get('/export', requirePerm('products', 'view'), h(async (req, res) => {
+  const { rows } = await query(
+    `SELECT p.*, c.name AS category_name
+     FROM products p
+     LEFT JOIN categories c ON c.id = p.category_id
+     ORDER BY p.name ASC`
+  );
+  const csv = toCsv(
+    EXPORT_COLUMNS,
+    rows.map((p) => ({
+      ...p,
+      barcode: p.barcode || '',
+      cost: Number(p.cost || 0).toFixed(2),
+      selling_price: Number(p.selling_price || 0).toFixed(2),
+      top_customer_price: Number(p.top_customer_price || 0).toFixed(2),
+      jobber_price: Number(p.jobber_price || 0).toFixed(2),
+      quantity: p.quantity,
+      category_name: p.category_name || '',
+      statusText: p.status ? 'Active' : 'Inactive',
+    }))
+  );
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="products-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send('\ufeff' + csv);
+}));
+
+const importBody = express.text({ type: () => true, limit: '3mb' });
+
+r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, res) => {
+  const mode = req.query.mode === 'update' ? 'update' : 'skip';
+  const dryRun = req.query.dryRun === '1';
+  if (mode === 'update' && !can(req, 'products', 'edit')) return fail(res, 403, 'Updating existing products needs edit permission');
+  if (typeof req.body !== 'string' || !req.body.trim()) return fail(res, 422, 'The file is empty');
+
+  const table = parseCsv(req.body).filter((row) => row.some((c) => String(c).trim() !== ''));
+  if (table.length < 2) return fail(res, 422, 'The file needs a header row and at least one product');
+
+  const header = table[0].map((h) => ALIAS_TO_FIELD[norm(h)] || null);
+  if (!header.includes('name')) {
+    return fail(res, 422, 'No product name column found. The first row must contain column headings such as Name or Product Name.');
+  }
+
+  const body = table.slice(1);
+  if (body.length > MAX_IMPORT_ROWS) return fail(res, 422, `Too many rows (${body.length}). Import at most ${MAX_IMPORT_ROWS} at a time.`);
+
+  const errors = [];
+  const valid = [];
+  const seenBarcodes = new Map();
+  const seenNames = new Map();
+
+  body.forEach((cells, i) => {
+    const line = i + 2;
+    const raw = {};
+    header.forEach((f, j) => {
+      if (f && raw[f] === undefined) raw[f] = clean(cells[j]);
+    });
+
+    const name = String(raw.name || '').trim();
+    if (!name) {
+      errors.push({ row: line, name: '—', message: 'Product name is required' });
+      return;
+    }
+    if (name.length > 200) {
+      errors.push({ row: line, name, message: 'Product name is too long (max 200)' });
+      return;
+    }
+
+    const barcode = raw.barcode ? String(raw.barcode).trim() : '';
+    if (barcode && !/^[A-Za-z0-9\-_.]*$/.test(barcode)) {
+      errors.push({ row: line, name, message: 'Barcode may only contain letters, numbers, - _ .' });
+      return;
+    }
+    if (barcode.length > 64) {
+      errors.push({ row: line, name, message: 'Barcode is too long (max 64)' });
+      return;
+    }
+
+    const cost = parseNum(raw.cost, 0);
+    if (cost === null || cost < 0 || cost > 1e11) {
+      errors.push({ row: line, name, message: 'Cost must be a valid non-negative number' });
+      return;
+    }
+
+    const sellingPrice = parseNum(raw.sellingPrice, 0);
+    if (sellingPrice === null || sellingPrice < 0 || sellingPrice > 1e11) {
+      errors.push({ row: line, name, message: 'Selling price must be a valid non-negative number' });
+      return;
+    }
+
+    const topCustomerPrice = parseNum(raw.topCustomerPrice, sellingPrice);
+    if (topCustomerPrice === null || topCustomerPrice < 0 || topCustomerPrice > 1e11) {
+      errors.push({ row: line, name, message: 'Top customer price must be a valid non-negative number' });
+      return;
+    }
+
+    const jobberPrice = parseNum(raw.jobberPrice, sellingPrice);
+    if (jobberPrice === null || jobberPrice < 0 || jobberPrice > 1e11) {
+      errors.push({ row: line, name, message: 'Jobber price must be a valid non-negative number' });
+      return;
+    }
+
+    const quantity = parseIntNum(raw.quantity, 0);
+    if (quantity === null || quantity < 0 || quantity > 1e9) {
+      errors.push({ row: line, name, message: 'Quantity must be a valid non-negative whole number' });
+      return;
+    }
+
+    const description = String(raw.description || '').slice(0, 5000);
+    const categoryName = String(raw.category || '').trim();
+    const status = raw.status === undefined ? true : parseStatus(raw.status);
+
+    const barcodeKey = barcode ? barcode.toLowerCase() : null;
+    const nameKey = name.toLowerCase();
+
+    if (barcodeKey && seenBarcodes.has(barcodeKey)) {
+      errors.push({ row: line, name, message: `Same barcode as row ${seenBarcodes.get(barcodeKey)}` });
+      return;
+    }
+    if (seenNames.has(nameKey)) {
+      errors.push({ row: line, name, message: `Same product name as row ${seenNames.get(nameKey)}` });
+      return;
+    }
+
+    if (barcodeKey) seenBarcodes.set(barcodeKey, line);
+    seenNames.set(nameKey, line);
+
+    valid.push({
+      row: line,
+      name,
+      barcode,
+      barcodeKey,
+      nameKey,
+      cost,
+      sellingPrice,
+      topCustomerPrice,
+      jobberPrice,
+      quantity,
+      description,
+      categoryName,
+      status,
+    });
+  });
+
+  const summary = await tx(async (client) => {
+    // 1. Categories
+    const { rows: catRows } = await client.query(`SELECT id, lower(name) AS lname, slug FROM categories`);
+    const catByName = new Map(catRows.map((c) => [c.lname, c.id]));
+    const catSlugs = new Set(catRows.map((c) => c.slug));
+
+    let defaultCatId = catRows[0]?.id;
+    if (!defaultCatId) {
+      if (dryRun) {
+        defaultCatId = '00000000-0000-0000-0000-000000000000';
+      } else {
+        const { rows: defCat } = await client.query(
+          `INSERT INTO categories (name, slug, status) VALUES ('General', 'general', true) RETURNING id`
+        );
+        defaultCatId = defCat[0].id;
+        catByName.set('general', defaultCatId);
+        catSlugs.add('general');
+      }
+    }
+
+    for (const item of valid) {
+      if (!item.categoryName) continue;
+      const catKey = item.categoryName.toLowerCase();
+      if (!catByName.has(catKey)) {
+        if (dryRun) {
+          catByName.set(catKey, '00000000-0000-0000-0000-000000000000');
+        } else {
+          let baseSlug = slugify(item.categoryName);
+          let s = baseSlug;
+          let counter = 1;
+          while (catSlugs.has(s)) {
+            s = `${baseSlug}-${counter++}`;
+          }
+          catSlugs.add(s);
+          const { rows: newCat } = await client.query(
+            `INSERT INTO categories (name, slug, status) VALUES ($1, $2, true) RETURNING id`,
+            [item.categoryName, s]
+          );
+          catByName.set(catKey, newCat[0].id);
+        }
+      }
+    }
+
+    // 2. Existing products
+    const { rows: existingProds } = await client.query(
+      `SELECT id, name, lower(name) AS lname, lower(barcode) AS lbarcode, category_id FROM products`
+    );
+    const byBarcode = new Map();
+    const byName = new Map();
+    for (const p of existingProds) {
+      if (p.lbarcode) byBarcode.set(p.lbarcode, p);
+      if (p.lname) byName.set(p.lname, p);
+    }
+
+    let created = 0, updated = 0, skipped = 0;
+
+    for (const item of valid) {
+      let match = (item.barcodeKey && byBarcode.get(item.barcodeKey)) || byName.get(item.nameKey);
+
+      if (match && mode === 'skip') {
+        skipped++;
+        continue;
+      }
+
+      const categoryId = item.categoryName
+        ? catByName.get(item.categoryName.toLowerCase())
+        : (match?.category_id || defaultCatId);
+
+      if (match) {
+        if (item.barcodeKey) {
+          const barcodeOwner = byBarcode.get(item.barcodeKey);
+          if (barcodeOwner && barcodeOwner.id !== match.id) {
+            errors.push({
+              row: item.row,
+              name: item.name,
+              message: `Barcode "${item.barcode}" is already held by "${barcodeOwner.name}"`,
+            });
+            continue;
+          }
+        }
+
+        updated++;
+        if (dryRun) continue;
+
+        await client.query(
+          `UPDATE products SET
+             name = $1,
+             cost = $2,
+             selling_price = $3,
+             top_customer_price = $4,
+             jobber_price = $5,
+             quantity = $6,
+             barcode = COALESCE(NULLIF($7, ''), barcode),
+             description = COALESCE(NULLIF($8, ''), description),
+             category_id = COALESCE($9, category_id),
+             status = $10,
+             updated_at = now()
+           WHERE id = $11`,
+          [
+            item.name,
+            item.cost,
+            item.sellingPrice,
+            item.topCustomerPrice,
+            item.jobberPrice,
+            item.quantity,
+            item.barcode || null,
+            item.description,
+            categoryId,
+            item.status,
+            match.id,
+          ]
+        );
+      } else {
+        if (item.barcodeKey) {
+          const barcodeOwner = byBarcode.get(item.barcodeKey);
+          if (barcodeOwner) {
+            errors.push({
+              row: item.row,
+              name: item.name,
+              message: `Barcode "${item.barcode}" is already held by "${barcodeOwner.name}"`,
+            });
+            continue;
+          }
+        }
+
+        created++;
+        if (dryRun) continue;
+
+        const { rows: inserted } = await client.query(
+          `INSERT INTO products (name, cost, selling_price, top_customer_price, jobber_price, quantity, barcode, description, category_id, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+          [
+            item.name,
+            item.cost,
+            item.sellingPrice,
+            item.topCustomerPrice,
+            item.jobberPrice,
+            item.quantity,
+            item.barcode || null,
+            item.description,
+            categoryId,
+            item.status,
+          ]
+        );
+
+        const newEntry = { id: inserted[0].id, name: item.name, lname: item.nameKey, lbarcode: item.barcodeKey, category_id: categoryId };
+        if (item.barcodeKey) byBarcode.set(item.barcodeKey, newEntry);
+        byName.set(item.nameKey, newEntry);
+      }
+    }
+
+    return { created, updated, skipped };
+  });
+
+  const columns = [...new Set(header.filter(Boolean))];
+  const ignored = table[0].filter((h, j) => h.trim() && !header[j]);
+  const result = {
+    dryRun,
+    mode,
+    totalRows: body.length,
+    ...summary,
+    failed: errors.length,
+    errors: errors.slice(0, 200),
+    columns,
+    ignoredColumns: ignored,
+    preview: valid.slice(0, 5).map(({ row, barcodeKey, nameKey, ...p }) => ({
+      ...p,
+      category: p.categoryName || 'General',
+    })),
+  };
+
+  const msg = dryRun
+    ? 'Preview ready'
+    : `Imported: ${summary.created} added, ${summary.updated} updated, ${summary.skipped} skipped, ${errors.length} with errors`;
+  ok(res, result, msg);
 }));
 
 r.get('/:id', requirePerm('products', 'view'), h(async (req, res) => {

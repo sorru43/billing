@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
-import { SquarePen, Trash2 } from 'lucide-react';
+import { FileSpreadsheet, SquarePen, Trash2, Upload } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
 import { Avatar, ConfirmModal, ListToolbar, PageHeader, Pagination, Row, Table, TableState, Toggle } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
+import ProductImportModal from '../components/ProductImportModal.jsx';
+
+const btnCls =
+  'border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 px-2 py-1 rounded-md shadow-sm cursor-pointer flex items-center gap-2 text-sm';
 
 export default function Products() {
   const navigate = useNavigate();
@@ -14,6 +18,7 @@ export default function Products() {
   const list = useList('/products', 'products');
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const actions = [
     can('products', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (p) => navigate(`/admin/products/edit/${p.id}`) },
@@ -48,7 +53,20 @@ export default function Products() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Products" actionLabel={can('products', 'create') && 'New Product'} onAction={() => navigate('/admin/products/new')} />
+      <PageHeader
+        title="Products"
+        actionLabel={can('products', 'create') && 'New Product'}
+        onAction={() => navigate('/admin/products/new')}
+      >
+        <a href="/api/products/export" download className={btnCls}>
+          <FileSpreadsheet size={14} /> Export
+        </a>
+        {can('products', 'create') && (
+          <button type="button" onClick={() => setImporting(true)} className={btnCls}>
+            <Upload size={14} /> Import
+          </button>
+        )}
+      </PageHeader>
       <ListToolbar
         search={list.search}
         onSearch={list.setSearch}
@@ -86,6 +104,7 @@ export default function Products() {
         message="Are you sure you want to delete this product?"
         isDeleting={deleting}
       />
+      <ProductImportModal isOpen={importing} onClose={() => setImporting(false)} onDone={list.reload} />
     </div>
   );
 }
