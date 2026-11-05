@@ -8,6 +8,8 @@ import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Products from './pages/Products.jsx';
 import ProductForm from './pages/ProductForm.jsx';
+import Matrices from './pages/Matrices.jsx';
+import MatrixForm from './pages/MatrixForm.jsx';
 import Categories from './pages/Categories.jsx';
 import Customers from './pages/Customers.jsx';
 import Invoices from './pages/Invoices.jsx';
@@ -95,6 +97,9 @@ export default function App() {
             <Route path="products" element={g('products', <Products />)} />
             <Route path="products/new" element={g('products', <ProductForm />, 'create')} />
             <Route path="products/edit/:id" element={g('products', <ProductForm />, 'edit')} />
+            <Route path="matrix" element={g('products', <Matrices />)} />
+            <Route path="matrix/new" element={g('products', <MatrixForm />, 'create')} />
+            <Route path="matrix/edit/:id" element={g('products', <MatrixForm />, 'edit')} />
             <Route path="categories" element={g('categories', <Categories />)} />
             <Route path="customers" element={g('customers', <Customers />)} />
             <Route path="invoices" element={g('invoices', <Invoices />)} />

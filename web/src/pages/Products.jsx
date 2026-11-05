@@ -21,7 +21,7 @@ export default function Products() {
   const [importing, setImporting] = useState(false);
 
   const actions = [
-    can('products', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (p) => navigate(`/admin/products/edit/${p.id}`) },
+    can('products', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (p) => navigate(p.matrix ? `/admin/matrix/edit/${p.matrix.id}` : `/admin/products/edit/${p.id}`) },
     can('products', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
   ].filter(Boolean);
   const headers = ['#', 'Product', 'Category', 'Cost', 'Selling', 'Top Customer', 'Jobber', 'Qty', 'Status'];
@@ -82,7 +82,10 @@ export default function Products() {
               index={(list.pagination.page - 1) * list.pagination.limit + i + 1}
               row={p}
               columns={[
-                <Avatar name={p.name} sub={p.barcode} />,
+                <div>
+                  <Avatar name={p.name} sub={p.barcode} />
+                  {p.matrix && <span className="ml-11 text-[11px] font-semibold text-purple-600">Matrix variant</span>}
+                </div>,
                 <p className="capitalize">{p.category?.name || 'N/A'}</p>,
                 money(p.cost),
                 money(p.selling_price),

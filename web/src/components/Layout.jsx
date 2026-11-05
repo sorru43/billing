@@ -16,6 +16,7 @@ const MENU = [
     title: 'Product / Services',
     children: [
       { to: '/admin/products', title: 'Products', slug: 'products', addPath: '/admin/products/new' },
+      { to: '/admin/matrix', title: 'Matrix Items', slug: 'products', addPath: '/admin/matrix/new' },
       { to: '/admin/categories', title: 'Categories', slug: 'categories' },
     ],
   },

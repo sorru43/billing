@@ -32,13 +32,15 @@ export default function ProductForm() {
     if (id) {
       api
         .get(`/products/${id}`)
-        .then(({ data }) =>
+        .then(({ data }) => {
+          // Variants are edited on their matrix item (name and options belong to it).
+          if (data.matrix) return navigate(`/admin/matrix/edit/${data.matrix.id}`, { replace: true });
           setForm({
             ...EMPTY,
             ...Object.fromEntries(Object.keys(EMPTY).map((k) => [k, data[k] ?? EMPTY[k]])),
             category_id: data.category_id || '',
-          }),
-        )
+          });
+        })
         .catch((e) => toast.error(e.message))
         .finally(() => setLoading(false));
     }

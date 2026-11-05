@@ -110,6 +110,33 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE UNIQUE INDEX IF NOT EXISTS customers_email_uq ON customers (lower(email)) WHERE email <> '';
 CREATE INDEX IF NOT EXISTS customers_name_idx ON customers (lower(name));
 
+-- Matrix items: one parent (e.g. "Vape Juice") with up to two attributes
+-- (e.g. Flavor x Size). Every variant is a normal row in products, so stock,
+-- barcodes, invoices, reports and import/export keep working unchanged.
+CREATE TABLE IF NOT EXISTS product_matrices (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                text NOT NULL,
+  category_id         uuid REFERENCES categories(id) ON DELETE SET NULL,
+  description         text NOT NULL DEFAULT '',
+  attr1_name          text NOT NULL,
+  attr1_values        jsonb NOT NULL DEFAULT '[]',
+  attr2_name          text NOT NULL DEFAULT '',
+  attr2_values        jsonb NOT NULL DEFAULT '[]',
+  cost                numeric(14,2) NOT NULL DEFAULT 0,
+  selling_price       numeric(14,2) NOT NULL DEFAULT 0,
+  top_customer_price  numeric(14,2) NOT NULL DEFAULT 0,
+  jobber_price        numeric(14,2) NOT NULL DEFAULT 0,
+  status              boolean NOT NULL DEFAULT true,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS product_matrices_name_uq ON product_matrices (lower(name));
+ALTER TABLE products ADD COLUMN IF NOT EXISTS matrix_id uuid REFERENCES product_matrices(id) ON DELETE CASCADE;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS option1 text NOT NULL DEFAULT '';
+ALTER TABLE products ADD COLUMN IF NOT EXISTS option2 text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS products_matrix_idx ON products(matrix_id);
+CREATE UNIQUE INDEX IF NOT EXISTS products_matrix_opts_uq ON products (matrix_id, lower(option1), lower(option2)) WHERE matrix_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS settings (
   key    text PRIMARY KEY,
   value  jsonb NOT NULL

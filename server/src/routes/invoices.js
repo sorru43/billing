@@ -115,7 +115,8 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
   const result = await tx(async (client) => {
     const ids = [...new Set(b.items.map((i) => i.productId))];
     // Lock the product rows so two invoices cannot oversell the same stock.
-    const { rows: products } = await client.query(`SELECT * FROM products WHERE id = ANY($1::uuid[]) FOR UPDATE`, [ids]);
+    const { rows: products } = await client.query(`SELECT p.*, m.status AS matrix_status FROM products p LEFT JOIN product_matrices m ON m.id = p.matrix_id
+        WHERE p.id = ANY($1::uuid[]) FOR UPDATE OF p`, [ids]);
     const byId = new Map(products.map((p) => [p.id, p]));
     const needed = new Map();
     for (const it of b.items) needed.set(it.productId, (needed.get(it.productId) || 0) + it.quantity);
@@ -123,7 +124,7 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
     const errors = {};
     b.items.forEach((it, idx) => {
       const p = byId.get(it.productId);
-      if (!p || !p.status) errors[`items.${idx}.productId`] = 'Product not found or inactive';
+      if (!p || !p.status || p.matrix_status === false) errors[`items.${idx}.productId`] = 'Product not found or inactive';
       else if (needed.get(p.id) > p.quantity) errors[`items.${idx}.quantity`] = `Only ${p.quantity} of "${p.name}" in stock`;
     });
     if (Object.keys(errors).length) return { errors };

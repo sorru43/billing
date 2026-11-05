@@ -24,7 +24,8 @@ const schema = z.object({
   status: z.boolean().default(true),
 });
 
-const SELECT = `SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id = p.category_id`;
+const SELECT = `SELECT p.*, c.name AS category_name, m.name AS matrix_name, m.status AS matrix_status
+  FROM products p LEFT JOIN categories c ON c.id = p.category_id LEFT JOIN product_matrices m ON m.id = p.matrix_id`;
 
 const out = (p) => ({
   id: p.id,
@@ -39,6 +40,7 @@ const out = (p) => ({
   category_id: p.category_id,
   category: p.category_id ? { id: p.category_id, name: p.category_name } : null,
   status: p.status,
+  matrix: p.matrix_id ? { id: p.matrix_id, name: p.matrix_name, option1: p.option1, option2: p.option2 } : null,
   createdAt: p.created_at,
   updatedAt: p.updated_at,
 });
@@ -66,11 +68,24 @@ r.get('/search', h(async (req, res) => {
   if (!can(req, 'invoices', 'create') && !can(req, 'products', 'view')) return fail(res, 403, 'You do not have permission to do this');
   const q = String(req.query.q || '').trim().slice(0, 100);
   const { rows } = await query(
-    `${SELECT} WHERE p.status = true AND ($1 = '' OR p.name ILIKE $2 OR p.barcode = $1)
+    `${SELECT} WHERE p.status = true AND (p.matrix_id IS NULL OR m.status) AND ($1 = '' OR p.name ILIKE $2 OR p.barcode = $1)
       ORDER BY (p.barcode = $1) DESC, p.name LIMIT 15`,
     [q, likeEscape(q)],
   );
-  ok(res, rows.map(out));
+  // Matrix parents come first (unless a barcode matched exactly): picking one opens the variant grid.
+  const exact = rows.some((p) => p.barcode && p.barcode === q);
+  const matrices = exact ? [] : (await query(
+    `SELECT m.id, m.name, m.attr1_name, m.attr2_name,
+            count(p.id)::int AS variant_count, coalesce(sum(p.quantity), 0)::int AS total_qty
+       FROM product_matrices m JOIN products p ON p.matrix_id = m.id AND p.status
+      WHERE m.status AND ($1 = '' OR m.name ILIKE $2)
+      GROUP BY m.id ORDER BY m.name LIMIT 5`,
+    [q, likeEscape(q)],
+  )).rows.map((m) => ({
+    isMatrix: true, id: m.id, name: m.name, attributes: [m.attr1_name, m.attr2_name].filter(Boolean),
+    variantCount: m.variant_count, quantity: m.total_qty,
+  }));
+  ok(res, [...matrices, ...rows.map(out)]);
 }));
 
 const MAX_IMPORT_ROWS = 5000;
@@ -491,6 +506,8 @@ r.put('/:id', requirePerm('products', 'edit'), h(async (req, res) => {
   const b = validate(schema, req.body, res);
   if (!b) return;
   if (!(await categoryExists(b.category_id))) return fail(res, 422, 'Invalid category', { category_id: 'Category not found' });
+  const owner = (await query(`SELECT matrix_id FROM products WHERE id=$1`, [req.params.id])).rows[0];
+  if (owner?.matrix_id) return fail(res, 422, 'This is a matrix variant — edit it from its matrix item');
   try {
     const { rowCount } = await query(
       `UPDATE products SET name=$1,cost=$2,selling_price=$3,top_customer_price=$4,jobber_price=$5,quantity=$6,barcode=$7,

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
-import { CirclePlus, Trash2 } from 'lucide-react';
+import { CirclePlus, Grid3x3, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, Logo } from '../auth.jsx';
 import { CancelButton, SubmitButton, useDebounced } from '../components/ui.jsx';
+import MatrixGridModal from '../components/MatrixGridModal.jsx';
 
 const LEVELS = [
   { value: 'selling', label: 'Selling Price', field: 'selling_price' },
@@ -26,7 +27,24 @@ function ProductPicker({ value, onPick, error }) {
   const [results, setResults] = useState([]);
   const debounced = useDebounced(q, 200);
   const ref = useRef(null);
+  const inputRef = useRef(null);
   const money = useMoney();
+  // The list is position:fixed so the table's horizontal-scroll wrapper cannot clip it.
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = inputRef.current?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 4, left: r.left });
+    };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open]);
 
   useEffect(() => setQ(value?.name || ''), [value]);
   useEffect(() => {
@@ -42,6 +60,7 @@ function ProductPicker({ value, onPick, error }) {
   return (
     <div className="relative w-full" ref={ref}>
       <input
+        ref={inputRef}
         className={`${smallCls} ${error ? 'border-red-500' : ''}`}
         placeholder="Search name or scan barcode..."
         value={q}
@@ -63,8 +82,11 @@ function ProductPicker({ value, onPick, error }) {
           }
         }}
       />
-      {open && (
-        <div className="absolute z-30 mt-1 w-[min(28rem,90vw)] bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
+      {open && pos && (
+        <div
+          style={{ top: pos.top, left: pos.left }}
+          className="fixed z-30 w-[min(28rem,90vw)] bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto"
+        >
           {results.length === 0 && <p className="px-3 py-2 text-sm text-gray-500">No products found</p>}
           {results.map((p) => (
             <button
@@ -78,11 +100,18 @@ function ProductPicker({ value, onPick, error }) {
             >
               <span>
                 <span className="text-gray-950 font-medium">{p.name}</span>
+                {p.isMatrix && <span className="block text-xs text-gray-500">Matrix · {p.attributes.join(' × ')}</span>}
                 {p.barcode && <span className="block text-xs text-gray-500">{p.barcode}</span>}
               </span>
-              <span className={`text-xs whitespace-nowrap ${p.quantity <= 0 ? 'text-red-600' : 'text-gray-500'}`}>
-                {p.quantity} in stock · {money(p.selling_price)}
-              </span>
+              {p.isMatrix ? (
+                <span className="text-xs whitespace-nowrap text-purple-600 font-semibold flex items-center gap-1">
+                  <Grid3x3 size={12} /> {p.variantCount} variants · {p.quantity} in stock
+                </span>
+              ) : (
+                <span className={`text-xs whitespace-nowrap ${p.quantity <= 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                  {p.quantity} in stock · {money(p.selling_price)}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -159,6 +188,7 @@ export default function InvoiceCreate() {
   const [rows, setRows] = useState([newRow()]);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [grid, setGrid] = useState(null); // { matrixId, rowKey } while the matrix grid is open
 
   useEffect(() => {
     api.get('/invoices/next-number').then((r) => {
@@ -181,6 +211,30 @@ export default function InvoiceCreate() {
     const address = [c.company, c.address, c.taxNumber && `Tax No: ${c.taxNumber}`].filter(Boolean).join('\n');
     setForm((f) => ({ ...f, customerName: c.name, customerEmail: c.email, customerPhone: c.phone, customerAddress: address }));
     if (c.priceLevel && c.priceLevel !== form.priceLevel) changeLevel(c.priceLevel);
+  };
+
+  // Picking a product fills the row; picking a matrix item opens its variant grid instead.
+  const pickProduct = (key, p) => {
+    if (p.isMatrix) setGrid({ matrixId: p.id, rowKey: key });
+    else setRow(key, { product: p, rate: Number(p[level.field]), description: p.description || '' });
+  };
+
+  // Grid lines: a variant already on the invoice gets its quantity topped up, others become new rows
+  // (the row the grid was opened from is reused if it is still empty).
+  const addFromGrid = (picked) => {
+    setRows((rs) => {
+      let next = [...rs];
+      const fresh = [];
+      for (const { product, quantity } of picked) {
+        const i = next.findIndex((r) => r.product?.id === product.id);
+        if (i >= 0) next[i] = { ...next[i], quantity: (Number(next[i].quantity) || 0) + quantity };
+        else fresh.push({ ...newRow(), product, quantity, rate: Number(product[level.field]), description: product.description || '' });
+      }
+      const at = next.findIndex((r) => r.key === grid.rowKey);
+      if (at >= 0 && !next[at].product && fresh.length) next.splice(at, 1, ...fresh);
+      else next = [...next.filter((r) => r.product), ...fresh];
+      return next.length ? next : [newRow()];
+    });
   };
 
   const lines = useMemo(
@@ -332,7 +386,7 @@ export default function InvoiceCreate() {
                         <ProductPicker
                           value={l.product}
                           error={errors[`${l.key}.productId`]}
-                          onPick={(p) => setRow(l.key, { product: p, rate: Number(p[level.field]), description: p.description || '' })}
+                          onPick={(p) => pickProduct(l.key, p)}
                         />
                         {l.product && <p className="text-xs text-gray-500 mt-1">{l.product.quantity} in stock</p>}
                       </td>
@@ -410,6 +464,7 @@ export default function InvoiceCreate() {
           </div>
         </div>
       </form>
+      <MatrixGridModal matrixId={grid?.matrixId} priceField={level.field} onClose={() => setGrid(null)} onAdd={addFromGrid} />
     </div>
   );
 }
