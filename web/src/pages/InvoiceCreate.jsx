@@ -47,6 +47,13 @@ function ProductPicker({ value, onPick, error }) {
   }, [open]);
 
   useEffect(() => setQ(value?.name || ''), [value]);
+  // A matrix pick opens the grid and may leave this row's product unchanged (top-up or cancel),
+  // so the box would keep showing the search text: put the row's own product name back.
+  const pick = (p) => {
+    onPick(p);
+    setOpen(false);
+    if (p.isMatrix) setQ(value?.name || '');
+  };
   useEffect(() => {
     if (!open) return;
     api.get('/products/search', { q: debounced }).then((r) => setResults(r.data)).catch(() => setResults([]));
@@ -75,10 +82,7 @@ function ProductPicker({ value, onPick, error }) {
             e.preventDefault();
             const r = await api.get('/products/search', { q }).catch(() => null);
             const exact = r?.data.find((p) => p.barcode && p.barcode === q.trim()) || (r?.data.length === 1 ? r.data[0] : null);
-            if (exact) {
-              onPick(exact);
-              setOpen(false);
-            }
+            if (exact) pick(exact);
           }
         }}
       />
@@ -92,10 +96,7 @@ function ProductPicker({ value, onPick, error }) {
             <button
               type="button"
               key={p.id}
-              onClick={() => {
-                onPick(p);
-                setOpen(false);
-              }}
+              onClick={() => pick(p)}
               className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 flex justify-between gap-3 cursor-pointer"
             >
               <span>
