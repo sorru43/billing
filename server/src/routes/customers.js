@@ -28,6 +28,19 @@ const out = (c) => ({
   taxNumber: c.tax_number, priceLevel: c.price_level, notes: c.notes, status: c.status, createdAt: c.created_at,
 });
 
+// Combined invoice totals per customer. Credit returns reduce what the customer owes.
+const TOTALS_SQL = `
+  (SELECT count(*)::int FROM invoices i WHERE i.customer_id = c.id) AS inv_count,
+  (SELECT coalesce(sum(total), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_total,
+  (SELECT coalesce(sum(total), 0) FROM invoices i WHERE i.customer_id = c.id AND i.status = 'paid') AS inv_paid,
+  (SELECT coalesce(sum(total), 0) FROM invoices i WHERE i.customer_id = c.id AND i.status = 'unpaid') AS inv_unpaid,
+  (SELECT coalesce(sum(total), 0) FROM returns rt WHERE rt.customer_id = c.id AND rt.settlement = 'credit') AS credits`;
+const round2 = (n) => Math.round(n * 100) / 100;
+const totalsOut = (c) => ({
+  invoiceCount: c.inv_count, total: c.inv_total, paid: c.inv_paid, unpaid: c.inv_unpaid,
+  credits: c.credits, balance: round2(c.inv_unpaid - c.credits),
+});
+
 const dupEmail = (res) => fail(res, 422, 'A customer with this email already exists', { email: 'A customer with this email already exists' });
 
 r.get('/', requirePerm('customers', 'view'), h(async (req, res) => {
@@ -35,8 +48,12 @@ r.get('/', requirePerm('customers', 'view'), h(async (req, res) => {
   const where = search ? `WHERE name ILIKE $1 OR company ILIKE $1 OR email ILIKE $1 OR phone ILIKE $1` : '';
   const params = search ? [likeEscape(search)] : [];
   const total = (await query(`SELECT count(*)::int n FROM customers ${where}`, params)).rows[0].n;
-  const { rows } = await query(`SELECT * FROM customers ${where} ORDER BY created_at DESC, name LIMIT ${limit} OFFSET ${offset}`, params);
-  ok(res, { customers: rows.map(out), pagination: pagination(total, page, limit) });
+  const { rows } = await query(
+    `SELECT c.*, ${TOTALS_SQL} FROM customers c ${where.replace(/\b(name|company|email|phone) ILIKE/g, 'c.$1 ILIKE')}
+      ORDER BY c.created_at DESC, c.name LIMIT ${limit} OFFSET ${offset}`,
+    params,
+  );
+  ok(res, { customers: rows.map((c) => ({ ...out(c), totals: totalsOut(c) })), pagination: pagination(total, page, limit) });
 }));
 
 // Picker on the invoice screen: invoice creators may search customers without the Customers module.
@@ -81,6 +98,32 @@ r.get('/:id', requirePerm('customers', 'view'), h(async (req, res) => {
   const { rows } = await query(`SELECT * FROM customers WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Customer not found');
   ok(res, out(rows[0]));
+}));
+
+// Customer statement: combined totals plus their unpaid and paid invoices and returns.
+r.get('/:id/statement', requirePerm('customers', 'view'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');
+  const { rows } = await query(`SELECT c.*, ${TOTALS_SQL} FROM customers c WHERE c.id=$1`, [req.params.id]);
+  if (!rows.length) return fail(res, 404, 'Customer not found');
+  const inv = (await query(
+    `SELECT id, invoice_number, invoice_date, due_date, total, status, created_at FROM invoices
+      WHERE customer_id=$1 ORDER BY invoice_date DESC, created_at DESC LIMIT 1000`,
+    [req.params.id],
+  )).rows.map((i) => ({
+    id: i.id, invoiceNumber: i.invoice_number, invoiceDate: i.invoice_date, dueDate: i.due_date,
+    total: i.total, status: i.status, createdAt: i.created_at,
+  }));
+  const rets = (await query(
+    `SELECT id, return_number, invoice_number, settlement, total, created_at FROM returns WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 500`,
+    [req.params.id],
+  )).rows.map((x) => ({ id: x.id, returnNumber: x.return_number, invoiceNumber: x.invoice_number, settlement: x.settlement, total: x.total, createdAt: x.created_at }));
+  ok(res, {
+    customer: out(rows[0]),
+    totals: totalsOut(rows[0]),
+    unpaid: inv.filter((i) => i.status === 'unpaid'),
+    paid: inv.filter((i) => i.status === 'paid'),
+    returns: rets,
+  });
 }));
 
 r.post('/', requirePerm('customers', 'create'), h(async (req, res) => {

@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
-import { Download, FileSpreadsheet, SquarePen, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, FileSpreadsheet, SquarePen, Trash2, Upload } from 'lucide-react';
 import { api } from '../api.js';
-import { useAuth, formatDate } from '../auth.jsx';
+import { useAuth, useMoney } from '../auth.jsx';
 import {
   Avatar, CancelButton, ConfirmModal, Field, ListToolbar, Modal, PageHeader, Pagination, Row, SubmitButton, Table, TableState, Toggle, inputCls,
 } from '../components/ui.jsx';
@@ -184,6 +185,8 @@ export function CustomerImportModal({ isOpen, onClose, onDone }) {
 
 export default function Customers() {
   const { can } = useAuth();
+  const navigate = useNavigate();
+  const money = useMoney();
   const list = useList('/customers', 'customers');
   const [editing, setEditing] = useState(null);
   const [errors, setErrors] = useState({});
@@ -193,10 +196,11 @@ export default function Customers() {
   const [importing, setImporting] = useState(false);
 
   const actions = [
+    { label: 'View Invoices', icon: <Eye size={14} />, onClick: (c) => navigate(`/admin/customers/${c.id}`) },
     can('customers', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (c) => (setErrors({}), setEditing({ ...EMPTY, ...c })) },
     can('customers', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
   ].filter(Boolean);
-  const headers = ['#', 'Customer', 'Contact', 'Price Level', 'Created On', 'Status'];
+  const headers = ['#', 'Customer', 'Contact', 'Price Level', 'Invoices Total', 'Paid', 'Owed', 'Status'];
   if (actions.length) headers.push('Actions');
   const set = (k) => (e) => setEditing((c) => ({ ...c, [k]: e.target.value }));
 
@@ -205,7 +209,7 @@ export default function Customers() {
     setSaving(true);
     setErrors({});
     try {
-      const { id, createdAt, ...body } = editing;
+      const { id, createdAt, totals, ...body } = editing;
       if (id) await api.put(`/customers/${id}`, body);
       else await api.post('/customers', body);
       toast.success(id ? 'Customer updated successfully' : 'Customer added successfully');
@@ -264,14 +268,21 @@ export default function Customers() {
               index={(list.pagination.page - 1) * list.pagination.limit + i + 1}
               row={c}
               columns={[
-                <Avatar name={c.name} sub={c.company} />,
+                <Link to={`/admin/customers/${c.id}`} className="hover:underline">
+                  <Avatar name={c.name} sub={c.company} />
+                </Link>,
                 <span className="block">
                   {c.email && <span className="block">{c.email}</span>}
                   {c.phone && <span className="block text-xs">{c.phone}</span>}
                   {!c.email && !c.phone && '-'}
                 </span>,
                 levelLabel(c.priceLevel),
-                formatDate(c.createdAt),
+                <span className="text-gray-950">
+                  {money(c.totals?.total || 0)}
+                  <span className="block text-xs text-gray-500">{c.totals?.invoiceCount || 0} invoices</span>
+                </span>,
+                <span className="text-emerald-700">{money(c.totals?.paid || 0)}</span>,
+                <span className={c.totals?.balance > 0 ? 'text-red-600 font-semibold' : 'text-gray-500'}>{money(c.totals?.balance || 0)}</span>,
                 <Toggle name={`cust-${c.id}`} checked={c.status} onChange={(v) => toggle(c, v)} disabled={!can('customers', 'edit')} />,
               ]}
               actions={actions}

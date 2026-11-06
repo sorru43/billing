@@ -5,12 +5,15 @@ import { api } from '../api.js';
 import { useDebounced } from './ui.jsx';
 
 // Shared state for list pages: search/limit/page live in the URL like the original app.
-export function useList(endpoint, key) {
+// `filters` names extra URL params passed through to the API (e.g. ['vendorId']).
+export function useList(endpoint, key, filters = []) {
   const [params, setParams] = useSearchParams();
   const search = params.get('search') || '';
   const limit = Number(params.get('limit') || 10);
   const page = Number(params.get('page') || 1);
   const debounced = useDebounced(search);
+  const extra = filters.map((f) => [f, params.get(f) || '']).filter(([, v]) => v);
+  const extraKey = JSON.stringify(extra);
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState({});
   const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
@@ -19,7 +22,7 @@ export function useList(endpoint, key) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get(endpoint, { search: debounced, limit, page });
+      const { data } = await api.get(endpoint, { search: debounced, limit, page, ...Object.fromEntries(JSON.parse(extraKey)) });
       const { [key]: list, pagination: p, ...rest } = data;
       setRows(list || []);
       setPagination(p);
@@ -29,13 +32,13 @@ export function useList(endpoint, key) {
     } finally {
       setLoading(false);
     }
-  }, [endpoint, key, debounced, limit, page]);
+  }, [endpoint, key, debounced, limit, page, extraKey]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const set = (next) => setParams({ search, limit: String(limit), page: String(page), ...next });
+  const set = (next) => setParams({ ...Object.fromEntries(extra), search, limit: String(limit), page: String(page), ...next });
   return {
     rows, meta, pagination, loading, reload: load, search, limit, page,
     setSearch: (v) => set({ search: v, page: '1' }),

@@ -8,6 +8,8 @@ export const MODULE_GROUPS = [
       { slug: 'customers', moduleName: 'Customers' },
       { slug: 'categories', moduleName: 'Categories' },
       { slug: 'invoices', moduleName: 'Invoices' },
+      { slug: 'returns', moduleName: 'Returns' },
+      { slug: 'receiving', moduleName: 'Receiving Inventory & Vendors' },
     ],
   },
   { moduleName: 'Reports', children: [{ slug: 'reports', moduleName: 'Reports (send by email)' }] },

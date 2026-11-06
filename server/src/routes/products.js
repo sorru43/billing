@@ -65,7 +65,7 @@ r.get('/', requirePerm('products', 'view'), h(async (req, res) => {
 
 // Product picker for the invoice editor: active products matching name or barcode.
 r.get('/search', h(async (req, res) => {
-  if (!can(req, 'invoices', 'create') && !can(req, 'products', 'view')) return fail(res, 403, 'You do not have permission to do this');
+  if (!can(req, 'invoices', 'create') && !can(req, 'products', 'view') && !can(req, 'receiving', 'create')) return fail(res, 403, 'You do not have permission to do this');
   const q = String(req.query.q || '').trim().slice(0, 100);
   const { rows } = await query(
     `${SELECT} WHERE p.status = true AND (p.matrix_id IS NULL OR m.status) AND ($1 = '' OR p.name ILIKE $2 OR p.barcode = $1)

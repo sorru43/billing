@@ -23,6 +23,7 @@ const schema = z.object({
   priceLevel: z.enum(['selling', 'top_customer', 'jobber']),
   notes: z.string().max(5000).default(''),
   status: z.enum(['unpaid', 'paid']).default('unpaid'),
+  customerId: z.string().uuid().optional().or(z.literal('')).or(z.null()).transform((v) => v || null),
   items: z
     .array(
       z.object({
@@ -43,6 +44,7 @@ const listOut = (i) => ({
   invoiceNumber: i.invoice_number,
   customerName: i.customer_name,
   customerEmail: i.customer_email,
+  customerId: i.customer_id,
   total: i.total,
   status: i.status,
   invoiceDate: i.invoice_date,
@@ -149,14 +151,24 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
     for (const [pid, qty] of needed) {
       await client.query(`UPDATE products SET quantity = quantity - $1, updated_at = now() WHERE id = $2`, [qty, pid]);
     }
+    // Link to the saved customer: the one picked, else a match by email, else by a unique exact name.
+    let customerId = null;
+    if (b.customerId) customerId = (await client.query(`SELECT id FROM customers WHERE id=$1`, [b.customerId])).rows[0]?.id || null;
+    if (!customerId && b.customerEmail) {
+      customerId = (await client.query(`SELECT id FROM customers WHERE lower(email)=lower($1)`, [b.customerEmail])).rows[0]?.id || null;
+    }
+    if (!customerId) {
+      const m = (await client.query(`SELECT id FROM customers WHERE lower(trim(name))=lower(trim($1)) LIMIT 2`, [b.customerName])).rows;
+      if (m.length === 1) customerId = m[0].id;
+    }
     const number = await nextNumber(client, false);
     const { rows } = await client.query(
       `INSERT INTO invoices (invoice_number, invoice_date, due_date, customer_name, customer_email, customer_phone, customer_address,
-                             price_level, items, subtotal, discount_total, tax_total, total, notes, status, created_by, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now() + make_interval(hours => $17)) RETURNING *`,
+                             price_level, items, subtotal, discount_total, tax_total, total, notes, status, created_by, expires_at, customer_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now() + make_interval(hours => $17), $18) RETURNING *`,
       [number, b.invoiceDate, b.dueDate, b.customerName, b.customerEmail, b.customerPhone, b.customerAddress, b.priceLevel,
        JSON.stringify(items), round2(subtotal), round2(discountTotal), round2(taxTotal), total, b.notes, b.status, req.user.id,
-       config.invoiceRetentionHours],
+       config.invoiceRetentionHours, customerId],
     );
     return { invoice: rows[0] };
   });

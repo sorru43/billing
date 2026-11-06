@@ -21,7 +21,8 @@ const fieldCls =
 const smallCls =
   'p-2 h-10 w-full border text-gray-700 text-sm border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-600 focus:border-purple-600';
 
-function ProductPicker({ value, onPick, error }) {
+// hideMatrix: list only sellable rows (variants by name), e.g. when receiving stock.
+export function ProductPicker({ value, onPick, error, hideMatrix = false }) {
   const [q, setQ] = useState(value?.name || '');
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState([]);
@@ -49,14 +50,17 @@ function ProductPicker({ value, onPick, error }) {
   useEffect(() => setQ(value?.name || ''), [value]);
   // A matrix pick opens the grid and may leave this row's product unchanged (top-up or cancel),
   // so the box would keep showing the search text: put the row's own product name back.
+  // The same goes for a product merged into an existing line (onPick returns true): this row is unchanged.
   const pick = (p) => {
-    onPick(p);
+    const merged = onPick(p);
     setOpen(false);
-    if (p.isMatrix) setQ(value?.name || '');
+    if (p.isMatrix || merged) setQ(value?.name || '');
   };
   useEffect(() => {
     if (!open) return;
-    api.get('/products/search', { q: debounced }).then((r) => setResults(r.data)).catch(() => setResults([]));
+    api.get('/products/search', { q: debounced })
+      .then((r) => setResults(hideMatrix ? r.data.filter((p) => !p.isMatrix) : r.data))
+      .catch(() => setResults([]));
   }, [debounced, open]);
   useEffect(() => {
     const close = (e) => ref.current && !ref.current.contains(e.target) && setOpen(false);
@@ -81,7 +85,8 @@ function ProductPicker({ value, onPick, error }) {
           if (e.key === 'Enter') {
             e.preventDefault();
             const r = await api.get('/products/search', { q }).catch(() => null);
-            const exact = r?.data.find((p) => p.barcode && p.barcode === q.trim()) || (r?.data.length === 1 ? r.data[0] : null);
+            const found = (r?.data || []).filter((p) => !hideMatrix || !p.isMatrix);
+            const exact = found.find((p) => p.barcode && p.barcode === q.trim()) || (found.length === 1 ? found[0] : null);
             if (exact) pick(exact);
           }
         }}
@@ -178,6 +183,7 @@ export default function InvoiceCreate() {
   const [form, setForm] = useState({
     invoiceDate: today(),
     dueDate: '',
+    customerId: '',
     customerName: '',
     customerEmail: '',
     customerPhone: '',
@@ -210,24 +216,52 @@ export default function InvoiceCreate() {
 
   const pickCustomer = (c) => {
     const address = [c.company, c.address, c.taxNumber && `Tax No: ${c.taxNumber}`].filter(Boolean).join('\n');
-    setForm((f) => ({ ...f, customerName: c.name, customerEmail: c.email, customerPhone: c.phone, customerAddress: address }));
+    setForm((f) => ({ ...f, customerId: c.id, customerName: c.name, customerEmail: c.email, customerPhone: c.phone, customerAddress: address }));
     if (c.priceLevel && c.priceLevel !== form.priceLevel) changeLevel(c.priceLevel);
   };
 
   // Picking a product fills the row; picking a matrix item opens its variant grid instead.
+  // A product already on another line (same item, name or barcode) adds 1 to that line's quantity
+  // instead of becoming a second row; returns true when it merged so the picker can reset itself.
   const pickProduct = (key, p) => {
-    if (p.isMatrix) setGrid({ matrixId: p.id, rowKey: key });
-    else setRow(key, { product: p, rate: Number(p[level.field]), description: p.description || '' });
+    if (p.isMatrix) {
+      setGrid({ matrixId: p.id, rowKey: key });
+      return false;
+    }
+    const name = (p.name || '').trim().toLowerCase();
+    const barcode = (p.barcode || '').trim();
+    const same = rows.find(
+      (r) =>
+        r.key !== key &&
+        r.product &&
+        (r.product.id === p.id ||
+          (name && (r.product.name || '').trim().toLowerCase() === name) ||
+          (barcode && (r.product.barcode || '').trim() === barcode)),
+    );
+    if (same) {
+      setRows((rs) => rs.map((r) => (r.key === same.key ? { ...r, quantity: (Number(r.quantity) || 0) + 1 } : r)));
+      toast.info(`${same.product.name}: quantity +1`, { autoClose: 1200 });
+      return true;
+    }
+    setRow(key, { product: p, rate: Number(p[level.field]), description: p.description || '' });
+    return false;
   };
 
-  // Grid lines: a variant already on the invoice gets its quantity topped up, others become new rows
+  // Grid lines: a variant already on the invoice (same item, name or barcode) gets its quantity topped up, others become new rows
   // (the row the grid was opened from is reused if it is still empty).
   const addFromGrid = (picked) => {
     setRows((rs) => {
       let next = [...rs];
       const fresh = [];
       for (const { product, quantity } of picked) {
-        const i = next.findIndex((r) => r.product?.id === product.id);
+        const name = (product.name || '').trim().toLowerCase();
+        const i = next.findIndex(
+          (r) =>
+            r.product &&
+            (r.product.id === product.id ||
+              (name && (r.product.name || '').trim().toLowerCase() === name) ||
+              (product.barcode && r.product.barcode === product.barcode)),
+        );
         if (i >= 0) next[i] = { ...next[i], quantity: (Number(next[i].quantity) || 0) + quantity };
         else fresh.push({ ...newRow(), product, quantity, rate: Number(product[level.field]), description: product.description || '' });
       }
@@ -347,7 +381,7 @@ export default function InvoiceCreate() {
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {(can('customers', 'view') || can('invoices', 'create')) && <CustomerPicker onPick={pickCustomer} />}
                 <div className="sm:col-span-2">
-                  <input required maxLength={200} placeholder="Customer name *" value={form.customerName} onChange={set('customerName')} className={smallCls} />
+                  <input required maxLength={200} placeholder="Customer name *" value={form.customerName} onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value, customerId: '' }))} className={smallCls} />
                   {errors.customerName && <p className="text-xs text-red-600 mt-1">{errors.customerName}</p>}
                 </div>
                 <div>

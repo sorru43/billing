@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import {
-  ArrowDownUp, Box, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
+  ArrowDownUp, Box, PackagePlus, Undo2, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
 } from 'lucide-react';
 import { useAuth, Logo } from '../auth.jsx';
 
@@ -28,6 +28,17 @@ const MENU = [
     title: 'Invoices',
     slug: 'invoices',
     addPath: '/admin/invoices/create-invoice',
+  },
+  { type: 'link', to: '/admin/returns', icon: <Undo2 size={16} />, title: 'Returns', slug: 'returns', addPath: '/admin/returns/new' },
+  {
+    type: 'collapsible',
+    id: 'receiving',
+    icon: <PackagePlus size={16} />,
+    title: 'Receiving Inventory',
+    children: [
+      { to: '/admin/receiving', title: 'Receivings', slug: 'receiving', addPath: '/admin/receiving/new' },
+      { to: '/admin/vendors', title: 'Vendors', slug: 'receiving' },
+    ],
   },
   {
     type: 'link',

@@ -12,6 +12,14 @@ import Matrices from './pages/Matrices.jsx';
 import MatrixForm from './pages/MatrixForm.jsx';
 import Categories from './pages/Categories.jsx';
 import Customers from './pages/Customers.jsx';
+import CustomerView from './pages/CustomerView.jsx';
+import Vendors from './pages/Vendors.jsx';
+import Receivings from './pages/Receivings.jsx';
+import ReceivingCreate from './pages/ReceivingCreate.jsx';
+import ReceivingView from './pages/ReceivingView.jsx';
+import Returns from './pages/Returns.jsx';
+import ReturnCreate from './pages/ReturnCreate.jsx';
+import ReturnView from './pages/ReturnView.jsx';
 import Invoices from './pages/Invoices.jsx';
 import InvoiceCreate from './pages/InvoiceCreate.jsx';
 import InvoiceView from './pages/InvoiceView.jsx';
@@ -43,6 +51,8 @@ function Home() {
   const order = [
     ['dashboard', null],
     ['invoices', '/admin/invoices'],
+    ['receiving', '/admin/receiving'],
+    ['returns', '/admin/returns'],
     ['products', '/admin/products'],
     ['categories', '/admin/categories'],
     ['reports', '/admin/reports'],
@@ -102,6 +112,14 @@ export default function App() {
             <Route path="matrix/edit/:id" element={g('products', <MatrixForm />, 'edit')} />
             <Route path="categories" element={g('categories', <Categories />)} />
             <Route path="customers" element={g('customers', <Customers />)} />
+            <Route path="customers/:id" element={g('customers', <CustomerView />)} />
+            <Route path="vendors" element={g('receiving', <Vendors />)} />
+            <Route path="receiving" element={g('receiving', <Receivings />)} />
+            <Route path="receiving/new" element={g('receiving', <ReceivingCreate />, 'create')} />
+            <Route path="receiving/view/:id" element={g('receiving', <ReceivingView />)} />
+            <Route path="returns" element={g('returns', <Returns />)} />
+            <Route path="returns/new" element={g('returns', <ReturnCreate />, 'create')} />
+            <Route path="returns/view/:id" element={g('returns', <ReturnView />)} />
             <Route path="invoices" element={g('invoices', <Invoices />)} />
             <Route path="invoices/create-invoice" element={g('invoices', <InvoiceCreate />, 'create')} />
             <Route path="invoices/view/:id" element={g('invoices', <InvoiceView />)} />
