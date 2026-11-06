@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
-import { Download, Eye, FileSpreadsheet, SquarePen, Trash2, Upload } from 'lucide-react';
+import { Check, CreditCard, Download, Eye, FileSpreadsheet, Info, SquarePen, Trash2, Upload } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
 import {
@@ -17,8 +17,173 @@ export const PRICE_LEVELS = [
 ];
 const levelLabel = (v) => PRICE_LEVELS.find((l) => l.value === v)?.label || v;
 const EMPTY = { name: '', company: '', email: '', phone: '', address: '', taxNumber: '', priceLevel: 'selling', notes: '', status: true };
+const round2 = (n) => Math.round(n * 100) / 100;
 const btnCls =
   'border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 px-2 py-1 rounded-md shadow-sm cursor-pointer flex items-center gap-2 text-sm';
+
+export function UpdateBalanceModal({ isOpen, onClose, customer, onDone }) {
+  const money = useMoney();
+  const [amount, setAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!customer) return null;
+  const balance = customer.totals?.balance || 0;
+  const numAmount = Number(amount) || 0;
+  const remainingAfter = Math.max(0, round2(balance - numAmount));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!numAmount || numAmount <= 0) {
+      setError('Please enter an amount greater than 0');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await api.post(`/customers/${customer.id}/payments`, {
+        amount: numAmount,
+        paymentMethod,
+        paymentDate,
+        notes,
+      });
+      toast.success(`Payment of ${money(numAmount)} recorded successfully!`);
+      setAmount('');
+      setNotes('');
+      onDone();
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Failed to update balance');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={`Update Balance · ${customer.name}`}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Customer Balance Summary */}
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3.5 space-y-2">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="font-semibold text-gray-900">{customer.name}</p>
+              {customer.company && <p className="text-xs text-gray-500">{customer.company}</p>}
+            </div>
+            <div className="text-right">
+              <span className="text-xs font-medium text-gray-500 block">Pending Balance</span>
+              <span className={`text-lg font-bold ${balance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                {money(balance)}
+              </span>
+            </div>
+          </div>
+          <div className="flex justify-between text-xs text-gray-500 pt-2 border-t border-gray-200">
+            <span>Invoices Total: <strong>{money(customer.totals?.total || 0)}</strong></span>
+            <span>Total Paid: <strong className="text-emerald-700">{money(customer.totals?.paid || 0)}</strong></span>
+          </div>
+        </div>
+
+        {error && <p className="text-sm font-medium text-red-600 bg-red-50 p-2.5 rounded border border-red-200">{error}</p>}
+
+        <Field label="Amount Received" required error={error ? '' : undefined}>
+          <div className="space-y-1.5">
+            <div className="relative">
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                required
+                autoFocus
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => { setAmount(e.target.value); setError(''); }}
+                className={`${inputCls} pr-28 text-base font-semibold text-gray-900`}
+              />
+              {balance > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setAmount(String(balance)); setError(''); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded cursor-pointer transition-colors"
+                >
+                  Pay Full ({money(balance)})
+                </button>
+              )}
+            </div>
+            {numAmount > 0 && balance > 0 && (
+              <p className="text-xs text-gray-600">
+                New pending balance after payment:{' '}
+                <strong className={remainingAfter > 0 ? 'text-red-600' : 'text-emerald-600'}>
+                  {money(remainingAfter)}
+                </strong>
+                {numAmount > balance && (
+                  <span className="text-purple-600 ml-1">
+                    (excess: {money(round2(numAmount - balance))})
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        </Field>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Payment Method">
+            <select
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value)}
+              className={`${inputCls} bg-white h-[42px]`}
+            >
+              <option value="cash">Cash</option>
+              <option value="card">Credit / Debit Card</option>
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="cheque">Cheque</option>
+              <option value="other">Other</option>
+            </select>
+          </Field>
+          <Field label="Payment Date">
+            <input
+              type="date"
+              required
+              value={paymentDate}
+              onChange={(e) => setPaymentDate(e.target.value)}
+              className={inputCls}
+            />
+          </Field>
+        </div>
+
+        <Field label="Notes / Reference">
+          <input
+            type="text"
+            maxLength={500}
+            placeholder="Receipt #, cheque number, or notes (optional)"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className={inputCls}
+          />
+        </Field>
+
+        <div className="bg-blue-50 border border-blue-200 rounded-md p-2.5 text-xs text-blue-800 flex items-start gap-2">
+          <Info size={15} className="text-blue-600 shrink-0 mt-0.5" />
+          <span>
+            Payment will automatically be applied to clear older unpaid bills first (FIFO) and deduct from the customer's pending amount.
+          </span>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <CancelButton onClick={onClose} />
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-gray-950 rounded-md shadow-sm cursor-pointer disabled:opacity-70 transition-colors flex items-center gap-1.5"
+          >
+            {saving ? 'Processing...' : 'Deduct from Balance'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
 export function CustomerImportModal({ isOpen, onClose, onDone }) {
   const { can } = useAuth();
@@ -194,13 +359,15 @@ export default function Customers() {
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [payingCustomer, setPayingCustomer] = useState(null);
 
   const actions = [
-    { label: 'View Invoices', icon: <Eye size={14} />, onClick: (c) => navigate(`/admin/customers/${c.id}`) },
+    { label: 'Update Balance', icon: <CreditCard size={14} />, onClick: (c) => setPayingCustomer(c) },
+    can('invoices', 'view') && { label: 'View Invoices', icon: <Eye size={14} />, onClick: (c) => navigate(`/admin/customers/${c.id}`) },
     can('customers', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (c) => (setErrors({}), setEditing({ ...EMPTY, ...c })) },
     can('customers', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
   ].filter(Boolean);
-  const headers = ['#', 'Customer', 'Contact', 'Price Level', 'Invoices Total', 'Paid', 'Owed', 'Status'];
+  const headers = ['#', 'Customer', 'Contact', 'Price Level', 'Invoices Total', 'Paid', 'Owed', 'Update Balance', 'Status'];
   if (actions.length) headers.push('Actions');
   const set = (k) => (e) => setEditing((c) => ({ ...c, [k]: e.target.value }));
 
@@ -283,6 +450,25 @@ export default function Customers() {
                 </span>,
                 <span className="text-emerald-700">{money(c.totals?.paid || 0)}</span>,
                 <span className={c.totals?.balance > 0 ? 'text-red-600 font-semibold' : 'text-gray-500'}>{money(c.totals?.balance || 0)}</span>,
+                <div>
+                  {c.totals?.balance > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setPayingCustomer(c)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-purple-600 hover:bg-gray-950 text-white shadow-sm cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      <CreditCard size={13} /> Update Balance
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPayingCustomer(c)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-gray-100 hover:bg-gray-200 text-gray-600 border border-gray-200 cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      <Check size={12} className="text-emerald-600" /> Settled
+                    </button>
+                  )}
+                </div>,
                 <Toggle name={`cust-${c.id}`} checked={c.status} onChange={(v) => toggle(c, v)} disabled={!can('customers', 'edit')} />,
               ]}
               actions={actions}
@@ -339,6 +525,12 @@ export default function Customers() {
         )}
       </Modal>
       <CustomerImportModal isOpen={importing} onClose={() => setImporting(false)} onDone={list.reload} />
+      <UpdateBalanceModal
+        isOpen={Boolean(payingCustomer)}
+        customer={payingCustomer}
+        onClose={() => setPayingCustomer(null)}
+        onDone={list.reload}
+      />
       <ConfirmModal
         isOpen={Boolean(toDelete)}
         onClose={() => setToDelete(null)}

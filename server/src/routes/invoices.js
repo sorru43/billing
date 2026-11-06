@@ -22,7 +22,25 @@ const schema = z.object({
   customerAddress: z.string().trim().max(1000).default(''),
   priceLevel: z.enum(['selling', 'top_customer', 'jobber']),
   notes: z.string().max(5000).default(''),
-  status: z.enum(['unpaid', 'paid']).default('unpaid'),
+  status: z.enum(['unpaid', 'paid', 'partial']).default('unpaid'),
+  paidAmount: z.coerce.number().min(0).default(0),
+  payment: z
+    .object({
+      isNotPaid: z.boolean().default(false),
+      cash: z.coerce.number().min(0).default(0),
+      cheque: z.coerce.number().min(0).default(0),
+      chequeNumber: z.string().trim().max(100).default(''),
+      check: z.coerce.number().min(0).default(0),
+      checkNumber: z.string().trim().max(100).default(''),
+      bank: z.coerce.number().min(0).default(0),
+      bankReference: z.string().trim().max(100).default(''),
+      zelle: z.coerce.number().min(0).default(0),
+      card: z.coerce.number().min(0).default(0),
+      cardReference: z.string().trim().max(100).default(''),
+      other: z.coerce.number().min(0).default(0),
+      otherNote: z.string().trim().max(200).default(''),
+    })
+    .optional(),
   customerId: z.string().uuid().optional().or(z.literal('')).or(z.null()).transform((v) => v || null),
   items: z
     .array(
@@ -46,6 +64,7 @@ const listOut = (i) => ({
   customerEmail: i.customer_email,
   customerId: i.customer_id,
   total: i.total,
+  paidAmount: i.paid_amount != null ? Number(i.paid_amount) : 0,
   status: i.status,
   invoiceDate: i.invoice_date,
   createdAt: i.created_at,
@@ -161,15 +180,77 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
       const m = (await client.query(`SELECT id FROM customers WHERE lower(trim(name))=lower(trim($1)) LIMIT 2`, [b.customerName])).rows;
       if (m.length === 1) customerId = m[0].id;
     }
+    let finalPaid = 0;
+    let finalStatus = b.status || 'unpaid';
+    const payEntries = [];
+
+    if (b.payment && !b.payment.isNotPaid) {
+      const {
+        cash = 0,
+        cheque = 0, chequeNumber = '',
+        check = 0, checkNumber = '',
+        bank = 0, bankReference = '',
+        zelle = 0,
+        card = 0, cardReference = '',
+        other = 0, otherNote = '',
+      } = b.payment;
+      const chqAmt = cheque || check;
+      const chqNum = chequeNumber || checkNumber;
+      const bankAmt = bank || zelle;
+      if (cash > 0) payEntries.push({ method: 'cash', amount: round2(cash), notes: 'Cash' });
+      if (chqAmt > 0) payEntries.push({ method: 'cheque', amount: round2(chqAmt), notes: chqNum ? `Cheque #${chqNum}` : 'Cheque' });
+      if (bankAmt > 0) payEntries.push({ method: 'bank', amount: round2(bankAmt), notes: bankReference ? `Bank Ref: ${bankReference}` : 'Bank transfer' });
+      if (card > 0) payEntries.push({ method: 'card', amount: round2(card), notes: cardReference ? `Card Ref: ${cardReference}` : 'Credit/Debit Card' });
+      if (other > 0) payEntries.push({ method: 'other', amount: round2(other), notes: otherNote ? `Other: ${otherNote}` : 'Other payment' });
+      const totalEntered = round2(payEntries.reduce((s, p) => s + p.amount, 0));
+      finalPaid = Math.min(total, totalEntered);
+    } else if (b.paidAmount > 0) {
+      finalPaid = Math.min(total, round2(b.paidAmount));
+    }
+
+    if (b.payment?.isNotPaid) {
+      finalStatus = 'unpaid';
+      finalPaid = 0;
+    } else if (finalPaid >= total && total > 0) {
+      finalStatus = 'paid';
+    } else if (finalPaid > 0) {
+      finalStatus = 'partial';
+    } else if (b.status === 'paid' && total > 0) {
+      finalPaid = total;
+      finalStatus = 'paid';
+    } else {
+      finalStatus = 'unpaid';
+      finalPaid = 0;
+    }
+
     const number = await nextNumber(client, false);
     const { rows } = await client.query(
       `INSERT INTO invoices (invoice_number, invoice_date, due_date, customer_name, customer_email, customer_phone, customer_address,
-                             price_level, items, subtotal, discount_total, tax_total, total, notes, status, created_by, expires_at, customer_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now() + make_interval(hours => $17), $18) RETURNING *`,
+                             price_level, items, subtotal, discount_total, tax_total, total, paid_amount, notes, status, created_by, expires_at, customer_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now() + make_interval(hours => $18), $19) RETURNING *`,
       [number, b.invoiceDate, b.dueDate, b.customerName, b.customerEmail, b.customerPhone, b.customerAddress, b.priceLevel,
-       JSON.stringify(items), round2(subtotal), round2(discountTotal), round2(taxTotal), total, b.notes, b.status, req.user.id,
+       JSON.stringify(items), round2(subtotal), round2(discountTotal), round2(taxTotal), total, finalPaid, b.notes, finalStatus, req.user.id,
        config.invoiceRetentionHours, customerId],
     );
+
+    // Record payments in customer_payments
+    for (const p of payEntries) {
+      const pSeq = (await client.query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
+      const paymentNumber = `PAY_${String(pSeq).padStart(6, '0')}`;
+      await client.query(
+        `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, notes, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [paymentNumber, customerId, b.customerName, p.amount, b.invoiceDate, p.method, `Invoice ${number}: ${p.notes}`, req.user.id],
+      );
+    }
+
+    // Keep sales records in sync
+    await client.query(
+      `INSERT INTO customer_sales_records (invoice_id, invoice_number, customer_id, customer_name, invoice_date, total, paid_amount, status, items)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [rows[0].id, number, customerId, b.customerName, b.invoiceDate, total, finalPaid, finalStatus, JSON.stringify(items)],
+    );
+
     return { invoice: rows[0] };
   });
   if (result.errors) return fail(res, 422, 'Please fix the highlighted items', result.errors);
@@ -179,9 +260,47 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
 r.patch('/:id/status', requirePerm('invoices', 'edit'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
   const status = req.body?.status;
-  if (!['paid', 'unpaid'].includes(status)) return fail(res, 422, 'Invalid status');
-  const { rowCount } = await query(`UPDATE invoices SET status=$1 WHERE id=$2`, [status, req.params.id]);
-  if (!rowCount) return fail(res, 404, 'Invoice not found');
+  if (!['paid', 'unpaid', 'partial'].includes(status)) return fail(res, 422, 'Invalid status');
+
+  // ONLY Admin (user_type === 1) can mark an invoice as unpaid
+  if (status === 'unpaid' && req.user?.user_type !== 1) {
+    return fail(res, 403, 'Only administrators can mark an invoice as unpaid');
+  }
+
+  const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
+  if (!rows.length) return fail(res, 404, 'Invoice not found');
+  const inv = rows[0];
+
+  if (status === 'unpaid') {
+    await query(`UPDATE invoices SET status='unpaid', paid_amount=0 WHERE id=$1`, [inv.id]);
+    await query(`UPDATE customer_sales_records SET status='unpaid', paid_amount=0 WHERE invoice_id=$1`, [inv.id]);
+    return ok(res, null, 'Invoice marked unpaid');
+  }
+
+  const total = Number(inv.total);
+  const currentPaid = Number(inv.paid_amount) || 0;
+  const due = round2(total - currentPaid);
+  const payAmount = req.body?.amount != null ? Math.min(due > 0 ? due : total, round2(Number(req.body.amount))) : (due > 0 ? due : total);
+  const newPaid = round2(currentPaid + payAmount);
+  const newStatus = newPaid >= total ? 'paid' : (newPaid > 0 ? 'partial' : 'unpaid');
+
+  await query(`UPDATE invoices SET status=$1, paid_amount=$2 WHERE id=$3`, [newStatus, newPaid, inv.id]);
+  await query(`UPDATE customer_sales_records SET status=$1, paid_amount=$2 WHERE invoice_id=$3`, [newStatus, newPaid, inv.id]);
+
+  if (payAmount > 0) {
+    const method = req.body?.paymentMethod || 'cash';
+    const ref = req.body?.reference ? ` (${req.body.reference})` : '';
+    const note = req.body?.notes ? ` - ${req.body.notes}` : '';
+    const pSeq = (await query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
+    const paymentNumber = `PAY_${String(pSeq).padStart(6, '0')}`;
+    const pDate = req.body?.paymentDate || new Date().toISOString().slice(0, 10);
+    await query(
+      `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [paymentNumber, inv.customer_id, inv.customer_name, payAmount, pDate, method, `Invoice ${inv.invoice_number}${ref}${note}`, req.user?.id || null],
+    );
+  }
+
   ok(res, null, 'Invoice status updated');
 }));
 
@@ -198,6 +317,25 @@ r.post('/:id/email', requirePerm('invoices', 'view'), h(async (req, res) => {
     return fail(res, 502, `Could not send email: ${e.message}`);
   }
   ok(res, null, `Invoice emailed to ${to.data}`);
+}));
+
+// Delete invoice from active invoices table (Admin only).
+// Sale record is permanently retained in customer_sales_records so total sale value is never lost.
+r.delete('/:id', requirePerm('invoices', 'delete'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
+  const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
+  if (!rows.length) return fail(res, 404, 'Invoice not found');
+  const inv = rows[0];
+
+  // Mark sales ledger record as deleted invoice, keeping the sale value permanently recorded
+  await query(
+    `UPDATE customer_sales_records SET invoice_deleted = true WHERE invoice_id = $1 OR invoice_number = $2`,
+    [inv.id, inv.invoice_number],
+  );
+
+  // Delete from active invoices table
+  await query(`DELETE FROM invoices WHERE id=$1`, [inv.id]);
+  ok(res, null, 'Invoice deleted. Sale value is recorded and preserved in Sales Reports.');
 }));
 
 export default r;

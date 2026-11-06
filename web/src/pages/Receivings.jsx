@@ -6,6 +6,7 @@ import { api } from '../api.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
 import { ListToolbar, PageHeader, Pagination, Row, StatusBadge, Table, TableState } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
+import PayVendorModal from '../components/PayVendorModal.jsx';
 
 export default function Receivings() {
   const navigate = useNavigate();
@@ -15,6 +16,7 @@ export default function Receivings() {
   const vendorId = params.get('vendorId') || '';
   const list = useList('/receivings', 'receivings', ['vendorId']);
   const [vendor, setVendor] = useState(null);
+  const [payingReceiving, setPayingReceiving] = useState(null);
   useEffect(() => {
     if (!vendorId) return setVendor(null);
     api.get(`/vendors/${vendorId}`).then((r) => setVendor(r.data)).catch(() => setVendor(null));
@@ -36,10 +38,10 @@ export default function Receivings() {
       can('receiving', 'edit') &&
         (x.status === 'paid'
           ? { label: 'Mark Unpaid', icon: <Undo2 size={14} />, onClick: () => setStatus(x, 'unpaid') }
-          : { label: 'Mark Paid', icon: <CircleCheckBig size={14} />, onClick: () => setStatus(x, 'paid') }),
+          : { label: 'Pay Portion / Mark Paid', icon: <CircleCheckBig size={14} />, onClick: () => setPayingReceiving(x) }),
     ].filter(Boolean);
 
-  const headers = ['#', 'Receiving ID', 'Vendor', 'Received On', 'Amount', 'Vendor Invoice', 'Actions'];
+  const headers = ['#', 'Receiving ID', 'Vendor', 'Received On', 'Total', 'Paid', 'Owed', 'Status', 'Actions'];
   return (
     <div className="space-y-4">
       <PageHeader
@@ -51,7 +53,7 @@ export default function Receivings() {
         <div className="flex items-center gap-2 text-sm">
           <span className="bg-purple-100 text-purple-600 px-2 py-1 rounded-md">
             Vendor: <b>{vendor?.name || '…'}</b>
-            {vendor && <> · owed {money(vendor.totals.owed)}</>}
+            {vendor && <> · owed {money(vendor.totals?.owed || 0)} · paid {money(vendor.totals?.paid || 0)}</>}
           </span>
           <button onClick={() => setParams({})} className="flex items-center gap-1 text-gray-500 hover:text-gray-900 cursor-pointer">
             <X size={14} /> Show all
@@ -70,10 +72,14 @@ export default function Receivings() {
                 <Link to={`/admin/receiving/view/${x.id}`} className="text-purple-600 font-semibold">{x.receivingNumber}</Link>,
                 <span>
                   <span className="block text-gray-700">{x.vendorName}</span>
-                  {x.vendorInvoiceNo && <span className="block text-xs">Inv # {x.vendorInvoiceNo}</span>}
+                  {x.vendorInvoiceNo && <span className="block text-xs text-gray-400">Inv # {x.vendorInvoiceNo}</span>}
                 </span>,
                 formatDate(x.receivedDate),
-                <span className="text-gray-950">{money(x.total)}</span>,
+                <span className="text-gray-950 font-medium">{money(x.total)}</span>,
+                <span className="text-emerald-600 font-semibold">{money(x.paidAmount || 0)}</span>,
+                <span className={(x.balance ?? (x.total - (x.paidAmount || 0))) > 0 ? 'text-red-600 font-bold' : 'text-gray-500'}>
+                  {money(x.balance ?? Math.max(0, x.total - (x.paidAmount || 0)))}
+                </span>,
                 <StatusBadge status={x.status} />,
               ]}
               actions={actions(x)}
@@ -82,6 +88,13 @@ export default function Receivings() {
         <TableState loading={list.loading} empty={!list.rows.length} colSpan={headers.length} emptyText="Nothing received yet" />
       </Table>
       <Pagination pagination={list.pagination} onPage={list.setPage} />
+
+      <PayVendorModal
+        isOpen={Boolean(payingReceiving)}
+        receiving={payingReceiving}
+        onClose={() => setPayingReceiving(null)}
+        onDone={list.reload}
+      />
     </div>
   );
 }

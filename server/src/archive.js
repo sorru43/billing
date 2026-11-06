@@ -51,6 +51,8 @@ export async function archiveAndDelete(id) {
     await query(`UPDATE invoices SET archive_attempts = archive_attempts + 1, archive_error = $1 WHERE id = $2`, [error, id]);
     return { ok: false, error };
   }
+  // Ensure the permanent sales ledger marks the active invoice as deleted, but preserves all sales values
+  await query(`UPDATE customer_sales_records SET invoice_deleted = true WHERE invoice_id = $1 OR invoice_number = $2`, [id, inv.invoice_number]);
   await query(`DELETE FROM invoices WHERE id = $1`, [id]);
   return { ok: true };
 }

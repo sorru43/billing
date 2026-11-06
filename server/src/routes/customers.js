@@ -32,14 +32,32 @@ const out = (c) => ({
 const TOTALS_SQL = `
   (SELECT count(*)::int FROM invoices i WHERE i.customer_id = c.id) AS inv_count,
   (SELECT coalesce(sum(total), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_total,
-  (SELECT coalesce(sum(total), 0) FROM invoices i WHERE i.customer_id = c.id AND i.status = 'paid') AS inv_paid,
-  (SELECT coalesce(sum(total), 0) FROM invoices i WHERE i.customer_id = c.id AND i.status = 'unpaid') AS inv_unpaid,
+  (SELECT coalesce(sum(CASE WHEN i.status = 'paid' THEN i.total ELSE coalesce(i.paid_amount, 0) END), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_paid,
+  (SELECT coalesce(sum(CASE WHEN i.status = 'paid' THEN 0 ELSE (i.total - coalesce(i.paid_amount, 0)) END), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_unpaid,
   (SELECT coalesce(sum(total), 0) FROM returns rt WHERE rt.customer_id = c.id AND rt.settlement = 'credit') AS credits`;
 const round2 = (n) => Math.round(n * 100) / 100;
-const totalsOut = (c) => ({
-  invoiceCount: c.inv_count, total: c.inv_total, paid: c.inv_paid, unpaid: c.inv_unpaid,
-  credits: c.credits, balance: round2(c.inv_unpaid - c.credits),
+const totalsOut = (c) => {
+  const unpaid = round2(Number(c.inv_unpaid) || 0);
+  const credits = round2(Number(c.credits) || 0);
+  return {
+    invoiceCount: c.inv_count,
+    total: round2(Number(c.inv_total) || 0),
+    paid: round2(Number(c.inv_paid) || 0),
+    unpaid,
+    credits,
+    balance: Math.max(0, round2(unpaid - credits)),
+  };
+};
+
+const paymentSchema = z.object({
+  amount: z.coerce.number().positive('Amount must be greater than 0').max(1e11),
+  paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').default(() => new Date().toISOString().slice(0, 10)),
+  paymentMethod: z.enum(['cash', 'card', 'bank_transfer', 'cheque', 'other']).default('cash'),
+  notes: z.string().max(2000).default(''),
 });
+
+const canUpdateBalance = (req) =>
+  can(req, 'customers', 'edit') || can(req, 'customers', 'view') || can(req, 'invoices', 'edit') || can(req, 'invoices', 'create');
 
 const dupEmail = (res) => fail(res, 422, 'A customer with this email already exists', { email: 'A customer with this email already exists' });
 
@@ -106,24 +124,110 @@ r.get('/:id/statement', requirePerm('customers', 'view'), h(async (req, res) => 
   const { rows } = await query(`SELECT c.*, ${TOTALS_SQL} FROM customers c WHERE c.id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Customer not found');
   const inv = (await query(
-    `SELECT id, invoice_number, invoice_date, due_date, total, status, created_at FROM invoices
+    `SELECT id, invoice_number, invoice_date, due_date, total, coalesce(paid_amount, 0) AS paid_amount, status, created_at FROM invoices
       WHERE customer_id=$1 ORDER BY invoice_date DESC, created_at DESC LIMIT 1000`,
     [req.params.id],
   )).rows.map((i) => ({
     id: i.id, invoiceNumber: i.invoice_number, invoiceDate: i.invoice_date, dueDate: i.due_date,
-    total: i.total, status: i.status, createdAt: i.created_at,
+    total: i.total, paidAmount: i.paid_amount, status: i.status, createdAt: i.created_at,
   }));
   const rets = (await query(
     `SELECT id, return_number, invoice_number, settlement, total, created_at FROM returns WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 500`,
     [req.params.id],
   )).rows.map((x) => ({ id: x.id, returnNumber: x.return_number, invoiceNumber: x.invoice_number, settlement: x.settlement, total: x.total, createdAt: x.created_at }));
+  const payments = (await query(
+    `SELECT id, payment_number, amount, payment_date, payment_method, notes, created_at FROM customer_payments
+      WHERE customer_id=$1 ORDER BY payment_date DESC, created_at DESC LIMIT 500`,
+    [req.params.id],
+  )).rows.map((p) => ({
+    id: p.id, paymentNumber: p.payment_number, amount: p.amount, paymentDate: p.payment_date,
+    paymentMethod: p.payment_method, notes: p.notes, createdAt: p.created_at,
+  }));
   ok(res, {
     customer: out(rows[0]),
     totals: totalsOut(rows[0]),
-    unpaid: inv.filter((i) => i.status === 'unpaid'),
+    unpaid: inv.filter((i) => i.status !== 'paid'),
     paid: inv.filter((i) => i.status === 'paid'),
     returns: rets,
+    payments,
   });
+}));
+
+// Update customer balance: records payment and deducts from unpaid bills (FIFO: oldest bill first)
+r.post('/:id/payments', h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');
+  if (!canUpdateBalance(req)) return fail(res, 403, 'You do not have permission to update customer balance');
+
+  const b = validate(paymentSchema, req.body, res);
+  if (!b) return;
+
+  const result = await tx(async (client) => {
+    const { rows: custRows } = await client.query(`SELECT * FROM customers WHERE id=$1 FOR UPDATE`, [req.params.id]);
+    if (!custRows.length) return { error: 'Customer not found', status: 404 };
+    const customer = custRows[0];
+
+    const pSeq = (await client.query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
+    const paymentNumber = `PAY_${String(pSeq).padStart(6, '0')}`;
+
+    const { rows: payRows } = await client.query(
+      `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [paymentNumber, customer.id, customer.name, b.amount, b.paymentDate, b.paymentMethod, b.notes, req.user?.id || null],
+    );
+
+    // Oldest bill first (FIFO): clear older pending bills before newer ones
+    const { rows: invoices } = await client.query(
+      `SELECT id, invoice_number, total, coalesce(paid_amount, 0) AS paid_amount, status
+       FROM invoices
+       WHERE customer_id = $1 AND status <> 'paid'
+       ORDER BY invoice_date ASC, created_at ASC
+       FOR UPDATE`,
+      [customer.id],
+    );
+
+    let remaining = b.amount;
+    const clearedInvoices = [];
+
+    for (const inv of invoices) {
+      if (remaining <= 0) break;
+      const invTotal = Number(inv.total);
+      const currentPaid = Number(inv.paid_amount);
+      const due = round2(invTotal - currentPaid);
+      if (due <= 0) continue;
+
+      const toPay = Math.min(remaining, due);
+      const newPaid = round2(currentPaid + toPay);
+      const newStatus = newPaid >= invTotal ? 'paid' : 'partial';
+
+      await client.query(
+        `UPDATE invoices SET paid_amount = $1, status = $2 WHERE id = $3`,
+        [newPaid, newStatus, inv.id],
+      );
+
+      // Keep sales record table synchronized if record exists
+      await client.query(
+        `UPDATE customer_sales_records SET paid_amount = $1, status = $2 WHERE invoice_id = $3`,
+        [newPaid, newStatus, inv.id],
+      );
+
+      clearedInvoices.push({
+        invoiceNumber: inv.invoice_number,
+        applied: toPay,
+        status: newStatus,
+      });
+
+      remaining = round2(remaining - toPay);
+    }
+
+    return {
+      payment: payRows[0],
+      clearedInvoices,
+      unallocatedAmount: remaining > 0 ? remaining : 0,
+    };
+  });
+
+  if (result.error) return fail(res, result.status || 400, result.error);
+  ok(res, result, 'Customer balance updated successfully');
 }));
 
 r.post('/', requirePerm('customers', 'create'), h(async (req, res) => {

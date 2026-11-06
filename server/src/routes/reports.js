@@ -40,35 +40,44 @@ async function build(b, sym) {
   if (b.type === 'sales') {
     const params = [];
     let where = 'WHERE true';
-    if (b.from) { params.push(b.from); where += ` AND invoice_date >= $${params.length}`; }
-    if (b.until) { params.push(b.until); where += ` AND invoice_date <= $${params.length}`; }
-    const { rows } = await query(`SELECT * FROM invoices ${where} ORDER BY invoice_date, invoice_number`, params);
-    const revenue = rows.reduce((a, i) => a + i.total, 0);
-    const paid = rows.filter((i) => i.status === 'paid').reduce((a, i) => a + i.total, 0);
+    if (b.from) { params.push(b.from); where += ` AND csr.invoice_date >= $${params.length}`; }
+    if (b.until) { params.push(b.until); where += ` AND csr.invoice_date <= $${params.length}`; }
+    const { rows } = await query(
+      `SELECT csr.*, inv.id AS active_invoice_id, inv.price_level
+       FROM customer_sales_records csr
+       LEFT JOIN invoices inv ON inv.invoice_number = csr.invoice_number
+       ${where}
+       ORDER BY csr.invoice_date DESC, csr.invoice_number DESC`,
+      params,
+    );
+    const revenue = rows.reduce((a, i) => a + Number(i.total), 0);
+    const paid = rows.reduce((a, i) => a + Number(i.paid_amount || 0), 0);
     return {
-      subtitle: `Invoices ${b.from || 'any date'} → ${b.until || 'today'}`,
+      subtitle: `Sales ${b.from || 'any date'} → ${b.until || 'today'} (includes permanent sales records even if invoice was purged)`,
       summary: [
-        { label: 'Invoices', value: rows.length },
-        { label: 'Total Revenue', value: money(revenue) },
-        { label: 'Paid', value: money(paid) },
-        { label: 'Unpaid', value: money(revenue - paid) },
+        { label: 'Total Sales Count', value: rows.length },
+        { label: 'Total Sale Value', value: money(revenue) },
+        { label: 'Total Paid', value: money(paid) },
+        { label: 'Total Unpaid', value: money(revenue - paid) },
       ],
       columns: [
         { key: 'number', label: 'Invoice ID', width: 14 },
         { key: 'date', label: 'Date', width: 11 },
         { key: 'customer', label: 'Customer', width: 22 },
-        { key: 'level', label: 'Price Level', width: 16 },
+        { key: 'level', label: 'Price Level', width: 14 },
         { key: 'items', label: 'Items', width: 7, align: 'right' },
-        { key: 'total', label: 'Total', width: 14, align: 'right' },
+        { key: 'total', label: 'Total Sale', width: 14, align: 'right' },
+        { key: 'paid', label: 'Paid', width: 12, align: 'right' },
         { key: 'status', label: 'Status', width: 9 },
       ],
       rows: rows.map((i) => ({
         number: i.invoice_number,
         date: new Date(i.invoice_date).toISOString().slice(0, 10),
         customer: i.customer_name,
-        level: PRICE_LEVELS[i.price_level],
-        items: i.items.reduce((a, it) => a + it.quantity, 0),
+        level: i.price_level ? (PRICE_LEVELS[i.price_level] || i.price_level) : 'Standard',
+        items: Array.isArray(i.items) ? i.items.reduce((a, it) => a + (it.quantity || 1), 0) : 0,
         total: money(i.total),
+        paid: money(i.paid_amount || 0),
         status: i.status,
       })),
     };
@@ -128,6 +137,108 @@ async function build(b, sym) {
 
 r.get('/types', requirePerm('reports', 'view'), h(async (req, res) => {
   ok(res, { types: REPORT_TYPES, defaultRecipient: req.user.email });
+}));
+
+// Sales report endpoint with total sale value, date filters (today default, 7, month, custom)
+// and permanent sales records retention even when invoices are deleted.
+r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  const fmtDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+  const today = new Date();
+  const todayStr = fmtDate(today);
+
+  let period = req.query.period || 'today';
+  let from = req.query.from;
+  let until = req.query.until;
+
+  if (period === 'today') {
+    from = req.query.from || todayStr;
+    until = req.query.until || todayStr;
+  } else if (period === '7') {
+    const d7 = new Date();
+    d7.setDate(d7.getDate() - 6);
+    from = req.query.from || fmtDate(d7);
+    until = req.query.until || todayStr;
+  } else if (period === 'month') {
+    const dMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    from = req.query.from || fmtDate(dMonth);
+    until = req.query.until || todayStr;
+  } else if (period === 'custom') {
+    from = from || todayStr;
+    until = until || todayStr;
+  } else {
+    period = 'today';
+    from = todayStr;
+    until = todayStr;
+  }
+
+  const params = [];
+  let where = 'WHERE true';
+  if (from) {
+    params.push(from);
+    where += ` AND csr.invoice_date >= $${params.length}`;
+  }
+  if (until) {
+    params.push(until);
+    where += ` AND csr.invoice_date <= $${params.length}`;
+  }
+  if (req.query.customerId) {
+    params.push(req.query.customerId);
+    where += ` AND csr.customer_id = $${params.length}`;
+  }
+
+  const { rows } = await query(
+    `SELECT csr.*, inv.id AS active_invoice_id, inv.price_level
+     FROM customer_sales_records csr
+     LEFT JOIN invoices inv ON inv.invoice_number = csr.invoice_number
+     ${where}
+     ORDER BY csr.invoice_date DESC, csr.created_at DESC`,
+    params,
+  );
+
+  const totalSales = rows.reduce((acc, r) => acc + Number(r.total || 0), 0);
+  const totalPaid = rows.reduce((acc, r) => acc + Number(r.paid_amount || 0), 0);
+  const totalOwed = Math.max(0, Math.round((totalSales - totalPaid) * 100) / 100);
+  const salesCount = rows.length;
+  const paidCount = rows.filter((r) => r.status === 'paid').length;
+  const partialCount = rows.filter((r) => r.status === 'partial').length;
+  const unpaidCount = rows.filter((r) => r.status === 'unpaid').length;
+  const deletedInvoicesCount = rows.filter((r) => r.invoice_deleted || !r.active_invoice_id).length;
+
+  const sales = rows.map((r) => ({
+    id: r.id,
+    invoiceId: r.active_invoice_id || null,
+    invoiceNumber: r.invoice_number,
+    customerId: r.customer_id,
+    customerName: r.customer_name,
+    invoiceDate: typeof r.invoice_date === 'string' ? r.invoice_date.slice(0, 10) : new Date(r.invoice_date).toISOString().slice(0, 10),
+    total: Number(r.total),
+    paidAmount: Number(r.paid_amount || 0),
+    balance: Math.max(0, Math.round((Number(r.total) - Number(r.paid_amount || 0)) * 100) / 100),
+    status: r.status,
+    invoiceDeleted: Boolean(r.invoice_deleted || !r.active_invoice_id),
+    itemsCount: Array.isArray(r.items) ? r.items.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0) : 0,
+    items: r.items,
+    createdAt: r.created_at,
+  }));
+
+  ok(res, {
+    summary: {
+      totalSales: Math.round(totalSales * 100) / 100,
+      totalPaid: Math.round(totalPaid * 100) / 100,
+      totalOwed,
+      salesCount,
+      paidCount,
+      partialCount,
+      unpaidCount,
+      deletedInvoicesCount,
+      period,
+      from,
+      until,
+    },
+    sales,
+  });
 }));
 
 r.post('/send', requirePerm('reports', 'create'), h(async (req, res) => {

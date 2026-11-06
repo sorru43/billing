@@ -374,6 +374,7 @@ export function Avatar({ name, sub }) {
 const STATUS = {
   paid: 'bg-emerald-100 text-emerald-700',
   unpaid: 'bg-yellow-100 text-yellow-700',
+  partial: 'bg-blue-100 text-blue-700',
   active: 'bg-emerald-100 text-emerald-700',
   inactive: 'bg-gray-100 text-gray-700',
 };

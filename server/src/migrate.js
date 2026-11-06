@@ -219,6 +219,19 @@ CREATE TABLE IF NOT EXISTS customer_sales_records (
 CREATE INDEX IF NOT EXISTS customer_sales_cust_idx ON customer_sales_records(customer_id);
 CREATE INDEX IF NOT EXISTS customer_sales_name_idx ON customer_sales_records(lower(trim(customer_name)));
 CREATE INDEX IF NOT EXISTS customer_sales_inv_idx ON customer_sales_records(invoice_number);
+CREATE INDEX IF NOT EXISTS customer_sales_date_idx ON customer_sales_records(invoice_date);
+
+ALTER TABLE customer_sales_records ADD COLUMN IF NOT EXISTS invoice_deleted boolean NOT NULL DEFAULT false;
+ALTER TABLE customer_sales_records ADD COLUMN IF NOT EXISTS payment_method text DEFAULT '';
+ALTER TABLE customer_sales_records ADD COLUMN IF NOT EXISTS notes text DEFAULT '';
+
+-- Backfill any invoices into customer_sales_records so sales values are permanently preserved
+INSERT INTO customer_sales_records (invoice_id, invoice_number, customer_id, customer_name, invoice_date, total, paid_amount, status, items, created_at)
+SELECT i.id, i.invoice_number, i.customer_id, i.customer_name, i.invoice_date, i.total, i.paid_amount, i.status, i.items, i.created_at
+FROM invoices i
+WHERE NOT EXISTS (
+  SELECT 1 FROM customer_sales_records csr WHERE csr.invoice_number = i.invoice_number
+);
 
 -- Customer item price history: tracks what each customer paid so returns automatically use their lowest paid price.
 CREATE TABLE IF NOT EXISTS customer_item_prices (
@@ -270,6 +283,8 @@ CREATE TABLE IF NOT EXISTS vendor_payments (
 );
 CREATE INDEX IF NOT EXISTS vp_vendor_idx ON vendor_payments(vendor_id);
 CREATE INDEX IF NOT EXISTS vp_name_idx ON vendor_payments(lower(trim(vendor_name)));
+ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS reference text DEFAULT '';
+ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS receiving_id uuid;
 
 CREATE TABLE IF NOT EXISTS settings (
   key    text PRIMARY KEY,
@@ -279,6 +294,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 async function main() {
   await pool.query(schema);
+  await pool.query("UPDATE invoices SET paid_amount = total WHERE status = 'paid' AND (paid_amount IS NULL OR paid_amount = 0);");
 
   const { rows } = await pool.query('SELECT count(*)::int AS n FROM users WHERE user_type = 1');
   if (rows[0].n === 0) {

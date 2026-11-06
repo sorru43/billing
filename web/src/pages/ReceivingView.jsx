@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { ArrowLeft, Printer } from 'lucide-react';
+import { ArrowLeft, DollarSign, Printer, Undo2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
 import { PRICE_RULES } from './ReceivingCreate.jsx';
+import PayVendorModal from '../components/PayVendorModal.jsx';
 
 const btn = 'flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-md cursor-pointer';
 const th = 'text-left px-3 py-2 text-xs font-semibold text-gray-600 uppercase';
@@ -18,6 +19,7 @@ export default function ReceivingView() {
   const money = useMoney();
   const [x, setX] = useState(null);
   const [error, setError] = useState('');
+  const [paying, setPaying] = useState(false);
   const load = useCallback(() => {
     api.get(`/receivings/${id}`).then((r) => setX(r.data)).catch((e) => setError(e.message));
   }, [id]);
@@ -38,15 +40,23 @@ export default function ReceivingView() {
   const price = (before, after) =>
     before !== after ? <><s className="text-gray-400">{money(before)}</s> <b className="text-amber-700">{money(after)}</b></> : money(after);
 
+  const due = x.balance ?? Math.max(0, Number(x.total) - Number(x.paidAmount || 0));
+
   return (
     <div className="space-y-4 max-w-6xl">
       <div className="flex flex-wrap justify-between gap-2 no-print">
         <button onClick={() => navigate('/admin/receiving')} className={`${btn} text-gray-600 hover:bg-gray-100`}><ArrowLeft size={16} /> Receiving</button>
         <div className="flex gap-2">
           {can('receiving', 'edit') && (
-            <button onClick={() => setStatus(x.status === 'paid' ? 'unpaid' : 'paid')} className={`${btn} bg-purple-600 text-white hover:bg-gray-950`}>
-              Mark {x.status === 'paid' ? 'Unpaid' : 'Paid'}
-            </button>
+            x.status === 'paid' ? (
+              <button onClick={() => setStatus('unpaid')} className={`${btn} border border-gray-300 text-gray-700 hover:bg-gray-50`}>
+                <Undo2 size={16} /> Mark Unpaid
+              </button>
+            ) : (
+              <button onClick={() => setPaying(true)} className={`${btn} bg-emerald-600 text-white hover:bg-emerald-700`}>
+                <DollarSign size={16} /> Pay Portion / Settle
+              </button>
+            )
           )}
           <button onClick={() => window.print()} className={`${btn} bg-gray-200 text-gray-700 hover:bg-gray-300`}><Printer size={16} /> Print</button>
         </div>
@@ -59,9 +69,13 @@ export default function ReceivingView() {
             {x.vendorInvoiceNo && <p className="text-sm text-gray-600">Vendor invoice # {x.vendorInvoiceNo}</p>}
             <p className="text-xs text-gray-500 mt-1">Price rule: {PRICE_RULES.find((r) => r.value === x.priceRule)?.label}</p>
           </div>
-          <div className="text-right">
+          <div className="text-right space-y-1">
             <StatusBadge status={x.status} />
-            <p className="text-2xl font-bold text-gray-950 mt-1">{money(x.total)}</p>
+            <div className="text-xs text-gray-500 space-y-0.5 mt-1">
+              <div>Total: <span className="text-sm font-bold text-gray-950">{money(x.total)}</span></div>
+              <div>Paid: <span className="font-semibold text-emerald-600">{money(x.paidAmount || 0)}</span></div>
+              <div>Owed: <span className="font-bold text-rose-600">{money(due)}</span></div>
+            </div>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -90,6 +104,12 @@ export default function ReceivingView() {
         </div>
         {x.notes && <p className="text-sm text-gray-600 whitespace-pre-wrap"><b>Notes:</b> {x.notes}</p>}
       </div>
+      <PayVendorModal
+        isOpen={paying}
+        receiving={x}
+        onClose={() => setPaying(false)}
+        onDone={load}
+      />
     </div>
   );
 }

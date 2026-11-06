@@ -34,7 +34,10 @@ const schema = z.object({
 
 const listOut = (x) => ({
   id: x.id, receivingNumber: x.receiving_number, vendorId: x.vendor_id, vendorName: x.vendor_name,
-  vendorInvoiceNo: x.vendor_invoice_no, receivedDate: x.received_date, status: x.status, total: x.total, createdAt: x.created_at,
+  vendorInvoiceNo: x.vendor_invoice_no, receivedDate: x.received_date, status: x.status, total: Number(x.total),
+  paidAmount: Number(x.paid_amount || 0),
+  balance: Math.max(0, Math.round((Number(x.total) - Number(x.paid_amount || 0)) * 100) / 100),
+  createdAt: x.created_at,
 });
 const fullOut = (x) => ({ ...listOut(x), priceRule: x.price_rule, items: x.items, notes: x.notes });
 
@@ -125,10 +128,54 @@ r.post('/', requirePerm('receiving', 'create'), h(async (req, res) => {
 r.patch('/:id/status', requirePerm('receiving', 'edit'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Receiving not found');
   const status = req.body?.status;
-  if (!['paid', 'unpaid'].includes(status)) return fail(res, 422, 'Invalid status');
-  const { rowCount } = await query(`UPDATE receivings SET status=$1 WHERE id=$2`, [status, req.params.id]);
-  if (!rowCount) return fail(res, 404, 'Receiving not found');
-  ok(res, null, `Vendor invoice marked ${status}`);
+  if (!['paid', 'unpaid', 'partial'].includes(status)) return fail(res, 422, 'Invalid status');
+
+  const { rows } = await query(`SELECT * FROM receivings WHERE id=$1`, [req.params.id]);
+  if (!rows.length) return fail(res, 404, 'Receiving not found');
+  const rcv = rows[0];
+
+  if (status === 'unpaid') {
+    await query(`UPDATE receivings SET status='unpaid', paid_amount=0 WHERE id=$1`, [rcv.id]);
+    return ok(res, null, 'Vendor invoice marked unpaid');
+  }
+
+  const total = Number(rcv.total);
+  const currentPaid = Number(rcv.paid_amount || 0);
+  const due = Math.max(0, Math.round((total - currentPaid) * 100) / 100);
+  const payAmount = req.body?.amount != null ? Math.min(due > 0 ? due : total, Math.round(Number(req.body.amount) * 100) / 100) : (due > 0 ? due : total);
+  const newPaid = Math.round((currentPaid + payAmount) * 100) / 100;
+  const newStatus = newPaid >= total ? 'paid' : (newPaid > 0 ? 'partial' : 'unpaid');
+
+  await query(`UPDATE receivings SET status=$1, paid_amount=$2 WHERE id=$3`, [newStatus, newPaid, rcv.id]);
+
+  if (payAmount > 0) {
+    const method = req.body?.paymentMethod || 'cash';
+    const ref = String(req.body?.reference || '').trim();
+    const note = String(req.body?.notes || '').trim();
+    const pSeq = (await query(`SELECT nextval('vendor_payment_seq') AS n`)).rows[0].n;
+    const paymentNumber = `VPAY_${String(pSeq).padStart(6, '0')}`;
+    const pDate = req.body?.paymentDate || new Date().toISOString().slice(0, 10);
+    await query(
+      `INSERT INTO vendor_payments (
+        payment_number, vendor_id, vendor_name, amount, payment_date,
+        payment_method, reference, notes, receiving_id, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        paymentNumber,
+        rcv.vendor_id,
+        rcv.vendor_name,
+        payAmount,
+        pDate,
+        method,
+        ref,
+        note ? `Receiving ${rcv.receiving_number} - ${note}` : `Receiving ${rcv.receiving_number}`,
+        rcv.id,
+        req.user?.id || null,
+      ],
+    );
+  }
+
+  ok(res, null, `Vendor invoice status updated to ${newStatus}`);
 }));
 
 export default r;

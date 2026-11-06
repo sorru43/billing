@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { ArrowLeft, CircleCheckBig, Undo2 } from 'lucide-react';
+import { ArrowLeft, CircleCheckBig, CreditCard, Undo2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
+import { UpdateBalanceModal } from './Customers.jsx';
+import MarkPaidModal from '../components/MarkPaidModal.jsx';
 
 const th = 'text-left px-3 py-2 text-xs font-semibold text-gray-600 uppercase';
 const td = 'px-3 py-2 text-sm text-gray-600';
+const round2 = (n) => Math.round(n * 100) / 100;
 
 function Stat({ label, value, tone = 'text-gray-950', sub }) {
   return (
@@ -23,11 +26,15 @@ function Stat({ label, value, tone = 'text-gray-950', sub }) {
 export default function CustomerView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const money = useMoney();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('unpaid');
+  const [paying, setPaying] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState(null);
+
+  const isAdmin = user?.user_type === 1;
 
   const load = useCallback(() => {
     api.get(`/customers/${id}/statement`).then((r) => setData(r.data)).catch((e) => setError(e.message));
@@ -58,6 +65,7 @@ export default function CustomerView() {
     ['unpaid', `Unpaid Invoices (${data.unpaid.length})`],
     ['paid', `Paid Invoices (${data.paid.length})`],
     ['returns', `Returns (${data.returns.length})`],
+    ['payments', `Payment History (${data.payments?.length || 0})`],
   ];
   const invoices = tab === 'paid' ? data.paid : data.unpaid;
   const invLink = (inv) =>
@@ -78,14 +86,22 @@ export default function CustomerView() {
           <h1 className="text-2xl font-bold text-gray-950">{c.name}</h1>
           <p className="text-sm text-gray-500">{[c.company, c.email, c.phone].filter(Boolean).join(' · ') || 'No contact details'}</p>
         </div>
-        {can('invoices', 'create') && (
+        <div className="flex items-center gap-2 self-start">
           <button
-            onClick={() => navigate('/admin/invoices/create-invoice')}
-            className="self-start bg-purple-600 hover:bg-gray-950 text-white px-3 py-1.5 rounded-md shadow cursor-pointer text-sm"
+            onClick={() => setPaying(true)}
+            className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-gray-950 text-white px-3 py-1.5 rounded-md shadow cursor-pointer text-sm font-medium transition-colors"
           >
-            New Invoice
+            <CreditCard size={15} /> Update Balance
           </button>
-        )}
+          {can('invoices', 'create') && (
+            <button
+              onClick={() => navigate('/admin/invoices/create-invoice')}
+              className="border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 px-3 py-1.5 rounded-md shadow-sm cursor-pointer text-sm font-medium transition-colors"
+            >
+              New Invoice
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -115,7 +131,43 @@ export default function CustomerView() {
       </div>
 
       <div className="overflow-x-auto border border-gray-200 rounded-md bg-white">
-        {tab !== 'returns' ? (
+        {tab === 'payments' ? (
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className={th}>Payment #</th>
+                <th className={th}>Date</th>
+                <th className={th}>Method</th>
+                <th className={th}>Notes</th>
+                <th className={`${th} text-right`}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data.payments || []).map((p) => (
+                <tr key={p.id} className="border-t border-gray-100">
+                  <td className={`${td} font-semibold text-gray-900`}>{p.paymentNumber}</td>
+                  <td className={td}>{formatDate(p.paymentDate)}</td>
+                  <td className={`${td} capitalize`}>{p.paymentMethod.replace('_', ' ')}</td>
+                  <td className={`${td} text-gray-500`}>{p.notes || '-'}</td>
+                  <td className={`${td} text-right font-semibold text-emerald-700`}>{money(p.amount)}</td>
+                </tr>
+              ))}
+              {(!data.payments || !data.payments.length) && (
+                <tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-500">No payment history recorded</td></tr>
+              )}
+            </tbody>
+            {data.payments && data.payments.length > 0 && (
+              <tfoot>
+                <tr className="border-t border-gray-200 bg-gray-50">
+                  <td colSpan={4} className={`${td} font-semibold text-gray-700`}>Total Payments Collected</td>
+                  <td className={`${td} text-right font-bold text-emerald-700`}>
+                    {money(data.payments.reduce((sum, p) => sum + Number(p.amount), 0))}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        ) : tab !== 'returns' ? (
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
@@ -133,18 +185,25 @@ export default function CustomerView() {
                   <td className={td}>{invLink(inv)}</td>
                   <td className={td}>{formatDate(inv.invoiceDate)}</td>
                   <td className={td}>{formatDate(inv.dueDate)}</td>
-                  <td className={`${td} text-right text-gray-950`}>{money(inv.total)}</td>
+                  <td className={`${td} text-right text-gray-950`}>
+                    <div>{money(inv.total)}</div>
+                    {inv.paidAmount > 0 && inv.status !== 'paid' && (
+                      <div className="text-xs text-emerald-600 font-medium">Paid: {money(inv.paidAmount)}</div>
+                    )}
+                  </td>
                   <td className={td}><StatusBadge status={inv.status} /></td>
                   {can('invoices', 'edit') && (
                     <td className={td}>
-                      {inv.status === 'unpaid' ? (
-                        <button onClick={() => setStatus(inv, 'paid')} className="flex items-center gap-1 text-emerald-700 hover:underline cursor-pointer">
+                      {inv.status === 'unpaid' || inv.status === 'partial' ? (
+                        <button onClick={() => setPayingInvoice(inv)} className="flex items-center gap-1 text-emerald-700 hover:underline cursor-pointer">
                           <CircleCheckBig size={14} /> Mark Paid
                         </button>
                       ) : (
-                        <button onClick={() => setStatus(inv, 'unpaid')} className="flex items-center gap-1 text-gray-600 hover:underline cursor-pointer">
-                          <Undo2 size={14} /> Mark Unpaid
-                        </button>
+                        isAdmin && (
+                          <button onClick={() => setStatus(inv, 'unpaid')} className="flex items-center gap-1 text-gray-600 hover:underline cursor-pointer">
+                            <Undo2 size={14} /> Mark Unpaid (Admin)
+                          </button>
+                        )
                       )}
                     </td>
                   )}
@@ -196,6 +255,19 @@ export default function CustomerView() {
           </table>
         )}
       </div>
+
+      <UpdateBalanceModal
+        isOpen={paying}
+        customer={c ? { ...c, totals: t } : null}
+        onClose={() => setPaying(false)}
+        onDone={load}
+      />
+      <MarkPaidModal
+        isOpen={Boolean(payingInvoice)}
+        invoice={payingInvoice}
+        onClose={() => setPayingInvoice(null)}
+        onDone={load}
+      />
     </div>
   );
 }

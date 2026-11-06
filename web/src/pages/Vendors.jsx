@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
-import { PackagePlus, ReceiptText, SquarePen, Trash2 } from 'lucide-react';
+import { DollarSign, PackagePlus, ReceiptText, SquarePen, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
 import {
   Avatar, CancelButton, ConfirmModal, Field, ListToolbar, Modal, PageHeader, Pagination, Row, SubmitButton, Table, TableState, Toggle, inputCls,
 } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
+import PayVendorModal from '../components/PayVendorModal.jsx';
 
 const EMPTY = { name: '', company: '', email: '', phone: '', address: '', notes: '', status: true };
 
@@ -17,18 +18,20 @@ export default function Vendors() {
   const money = useMoney();
   const list = useList('/vendors', 'vendors');
   const [editing, setEditing] = useState(null);
+  const [payingVendor, setPayingVendor] = useState(null);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
   const actions = [
+    { label: 'Pay Vendor', icon: <DollarSign size={14} />, onClick: (v) => setPayingVendor(v) },
     { label: 'Receivings', icon: <ReceiptText size={14} />, onClick: (v) => navigate(`/admin/receiving?vendorId=${v.id}`) },
     can('receiving', 'create') && { label: 'Receive Stock', icon: <PackagePlus size={14} />, onClick: (v) => navigate(`/admin/receiving/new?vendorId=${v.id}`) },
     can('receiving', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (v) => (setErrors({}), setEditing({ ...EMPTY, ...v })) },
     can('receiving', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
   ].filter(Boolean);
-  const headers = ['#', 'Vendor', 'Contact', 'Total Received', 'Owed to Vendor', 'Status', 'Actions'];
+  const headers = ['#', 'Vendor', 'Contact', 'Total Received', 'Total Paid', 'Owed to Vendor', 'Update Balance', 'Status', 'Actions'];
   const set = (k) => (e) => setEditing((v) => ({ ...v, [k]: e.target.value }));
 
   const save = async (e) => {
@@ -92,8 +95,22 @@ export default function Vendors() {
                   {v.phone && <span className="block text-xs">{v.phone}</span>}
                   {!v.email && !v.phone && '-'}
                 </span>,
-                <span className="text-gray-950">{money(v.totals?.bought || 0)}</span>,
-                <span className={v.totals?.owed > 0 ? 'text-red-600 font-semibold' : 'text-gray-500'}>{money(v.totals?.owed || 0)}</span>,
+                <span className="text-gray-950 font-medium">{money(v.totals?.bought || 0)}</span>,
+                <span className="text-emerald-600 font-semibold">{money(v.totals?.paid || 0)}</span>,
+                <span className={v.totals?.owed > 0 ? 'text-red-600 font-bold' : 'text-gray-500'}>{money(v.totals?.owed || 0)}</span>,
+                <button
+                  type="button"
+                  onClick={() => setPayingVendor(v)}
+                  disabled={!v.totals?.owed || v.totals.owed <= 0}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                    v.totals?.owed > 0
+                      ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:border-purple-300 shadow-2xs'
+                      : 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed opacity-50'
+                  }`}
+                  title={v.totals?.owed > 0 ? 'Pay vendor portion via check, cash, or wire' : 'No balance owed'}
+                >
+                  Update Balance
+                </button>,
                 <Toggle name={`vend-${v.id}`} checked={v.status} onChange={(s) => toggle(v, s)} disabled={!can('receiving', 'edit')} />,
               ]}
               actions={actions}
@@ -102,6 +119,13 @@ export default function Vendors() {
         <TableState loading={list.loading} empty={!list.rows.length} colSpan={headers.length} emptyText="No vendors yet." />
       </Table>
       <Pagination pagination={list.pagination} onPage={list.setPage} />
+
+      <PayVendorModal
+        isOpen={Boolean(payingVendor)}
+        vendor={payingVendor}
+        onClose={() => setPayingVendor(null)}
+        onDone={list.reload}
+      />
 
       <Modal isOpen={Boolean(editing)} onClose={() => setEditing(null)} title={editing?.id ? 'Edit Vendor' : 'Add Vendor'}>
         {editing && (

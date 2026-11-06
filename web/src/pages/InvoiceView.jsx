@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { ArrowLeft, Download, Mail, Printer } from 'lucide-react';
+import { ArrowLeft, Download, Mail, Printer, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, formatDate, Logo } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
 import EmailInvoiceModal from './EmailInvoiceModal.jsx';
+import MarkPaidModal from '../components/MarkPaidModal.jsx';
 
 const btn = 'flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-md cursor-pointer';
+const round2 = (n) => Math.round(n * 100) / 100;
 
 export default function InvoiceView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can, company } = useAuth();
+  const { can, company, user } = useAuth();
   const money = useMoney();
   const [inv, setInv] = useState(null);
   const [error, setError] = useState('');
   const [emailing, setEmailing] = useState(false);
+  const [paying, setPaying] = useState(false);
+
+  const isAdmin = user?.user_type === 1;
 
   const load = useCallback(() => {
     api.get(`/invoices/${id}`).then((r) => setInv(r.data)).catch((e) => setError(e.message));
@@ -28,6 +33,19 @@ export default function InvoiceView() {
       await api.patch(`/invoices/${id}/status`, { status });
       toast.success(`Invoice marked ${status}`);
       load();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete invoice ${inv.invoiceNumber}? It will be removed from active invoices, but its total sale value will remain permanently recorded and saved in Reports.`)) {
+      return;
+    }
+    try {
+      await api.delete(`/invoices/${id}`);
+      toast.success(`Invoice ${inv.invoiceNumber} deleted. Sale value preserved in Reports.`);
+      navigate('/admin/invoices');
     } catch (e) {
       toast.error(e.message);
     }
@@ -62,11 +80,31 @@ export default function InvoiceView() {
             <Mail size={16} /> Email
           </button>
           {can('invoices', 'edit') && (
+            inv.status === 'paid' ? (
+              isAdmin && (
+                <button
+                  onClick={() => setStatus('unpaid')}
+                  className={`${btn} border border-gray-300 text-gray-700 hover:bg-gray-50`}
+                >
+                  Mark Unpaid (Admin)
+                </button>
+              )
+            ) : (
+              <button
+                onClick={() => setPaying(true)}
+                className={`${btn} bg-emerald-600 text-white hover:bg-emerald-700`}
+              >
+                Mark as Paid
+              </button>
+            )
+          )}
+          {(isAdmin || can('invoices', 'delete')) && (
             <button
-              onClick={() => setStatus(inv.status === 'paid' ? 'unpaid' : 'paid')}
-              className={`${btn} border border-gray-300 text-gray-700 hover:bg-gray-50`}
+              onClick={handleDelete}
+              className={`${btn} bg-red-50 text-red-600 border border-red-200 hover:bg-red-100`}
+              title="Delete invoice (Sale value is preserved in reports)"
             >
-              Mark {inv.status === 'paid' ? 'Unpaid' : 'Paid'}
+              <Trash2 size={16} /> Delete
             </button>
           )}
         </div>
@@ -145,11 +183,29 @@ export default function InvoiceView() {
               <span>Invoice Total</span>
               <span>{money(inv.total)}</span>
             </div>
+            {Number(inv.paidAmount) > 0 && (
+              <div className="flex justify-between text-sm font-semibold text-emerald-700">
+                <span>Amount Paid</span>
+                <span>{money(inv.paidAmount)}</span>
+              </div>
+            )}
+            {Number(inv.total) > (Number(inv.paidAmount) || 0) && inv.status !== 'paid' && (
+              <div className="flex justify-between text-sm font-bold text-red-600 border-t border-gray-200 pt-1">
+                <span>Balance Due</span>
+                <span>{money(round2(Number(inv.total) - (Number(inv.paidAmount) || 0)))}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <EmailInvoiceModal invoice={emailing ? inv : null} onClose={() => setEmailing(false)} />
+      <MarkPaidModal
+        isOpen={paying}
+        invoice={inv}
+        onClose={() => setPaying(false)}
+        onDone={load}
+      />
     </div>
   );
 }

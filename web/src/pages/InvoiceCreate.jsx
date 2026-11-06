@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
-import { CirclePlus, Grid3x3, Trash2 } from 'lucide-react';
+import { Banknote, Building2, CheckSquare, CirclePlus, CreditCard, Grid3x3, HelpCircle, Send, Trash2, XCircle } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, Logo } from '../auth.jsx';
-import { CancelButton, SubmitButton, useDebounced } from '../components/ui.jsx';
+import { CancelButton, Modal, SubmitButton, useDebounced } from '../components/ui.jsx';
 import MatrixGridModal from '../components/MatrixGridModal.jsx';
 
 const LEVELS = [
@@ -175,11 +175,333 @@ function CustomerPicker({ onPick }) {
   );
 }
 
+export function InvoicePaymentModal({
+  isOpen,
+  onClose,
+  total,
+  payment,
+  setPayment,
+  onConfirm,
+  saving,
+  customerName,
+}) {
+  const money = useMoney();
+  const cashVal = Number(payment.cash) || 0;
+  const chequeVal = Number(payment.cheque) || Number(payment.check) || 0;
+  const bankVal = Number(payment.bank) || Number(payment.zelle) || 0;
+  const cardVal = Number(payment.card) || 0;
+  const otherVal = Number(payment.other) || 0;
+  const totalPaid = payment.isNotPaid ? 0 : round2(cashVal + chequeVal + bankVal + cardVal + otherVal);
+  const remaining = Math.max(0, round2(total - totalPaid));
+
+  const handleFull = (method) => {
+    const currentMethodVal = Number(payment[method]) || 0;
+    const amountToPut = remaining > 0 ? round2(currentMethodVal + remaining) : total;
+    setPayment((p) => ({
+      ...p,
+      isNotPaid: false,
+      [method]: String(amountToPut),
+    }));
+  };
+
+  const handleNotPaid = () => {
+    setPayment({
+      isNotPaid: true,
+      cash: '',
+      cheque: '',
+      chequeNumber: '',
+      check: '',
+      checkNumber: '',
+      bank: '',
+      bankReference: '',
+      zelle: '',
+      card: '',
+      cardReference: '',
+      other: '',
+      otherNote: '',
+    });
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Payment Options">
+      <div className="space-y-4">
+        {/* Top Summary Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-gray-50 border border-gray-200 rounded-lg">
+          <div>
+            <p className="text-xs text-gray-500 font-medium">Customer: <strong className="text-gray-900">{customerName || 'Customer'}</strong></p>
+            <p className="text-xl font-bold text-gray-950">
+              Invoice Total: <span className="text-purple-700">{money(total)}</span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleNotPaid}
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-md border transition-all cursor-pointer flex items-center gap-1.5 ${
+              payment.isNotPaid || (totalPaid === 0 && !cashVal && !chequeVal && !bankVal && !cardVal && !otherVal)
+                ? 'bg-yellow-100 border-yellow-400 text-yellow-900 ring-2 ring-yellow-400'
+                : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            <XCircle size={14} className="text-yellow-700" />
+            Not Paid (Credit / Owed)
+          </button>
+        </div>
+
+        {/* Payment Methods: Cash, Cheque, Bank, Credit / Debit, Others */}
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Enter Payment Received
+          </p>
+
+          {/* Cash */}
+          <div className="p-3 border border-gray-200 rounded-lg bg-white space-y-1 hover:border-purple-300 transition-colors">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                <Banknote size={16} className="text-emerald-600" /> Cash
+              </label>
+              <button
+                type="button"
+                onClick={() => handleFull('cash')}
+                className="text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
+              >
+                Full ({money(remaining > 0 ? remaining : total)})
+              </button>
+            </div>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                value={payment.cash}
+                disabled={payment.isNotPaid}
+                onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, cash: e.target.value }))}
+                className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-base font-semibold text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+              />
+            </div>
+          </div>
+
+          {/* Cheque */}
+          <div className="p-3 border border-gray-200 rounded-lg bg-white space-y-1 hover:border-purple-300 transition-colors">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                <CheckSquare size={16} className="text-blue-600" /> Cheque
+              </label>
+              <button
+                type="button"
+                onClick={() => handleFull('cheque')}
+                className="text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
+              >
+                Full ({money(remaining > 0 ? remaining : total)})
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                type="text"
+                placeholder="Cheque # (optional)"
+                value={payment.chequeNumber || payment.checkNumber || ''}
+                disabled={payment.isNotPaid}
+                onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, chequeNumber: e.target.value, checkNumber: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+              />
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  value={payment.cheque || payment.check || ''}
+                  disabled={payment.isNotPaid}
+                  onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, cheque: e.target.value, check: e.target.value }))}
+                  className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-base font-semibold text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Bank */}
+          <div className="p-3 border border-gray-200 rounded-lg bg-white space-y-1 hover:border-purple-300 transition-colors">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                <Building2 size={16} className="text-indigo-600" /> Bank Transfer
+              </label>
+              <button
+                type="button"
+                onClick={() => handleFull('bank')}
+                className="text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
+              >
+                Full ({money(remaining > 0 ? remaining : total)})
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                type="text"
+                placeholder="Bank / Transfer Ref (optional)"
+                value={payment.bankReference || ''}
+                disabled={payment.isNotPaid}
+                onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, bankReference: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+              />
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  value={payment.bank || payment.zelle || ''}
+                  disabled={payment.isNotPaid}
+                  onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, bank: e.target.value, zelle: e.target.value }))}
+                  className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-base font-semibold text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Credit / Debit Card */}
+          <div className="p-3 border border-gray-200 rounded-lg bg-white space-y-1 hover:border-purple-300 transition-colors">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                <CreditCard size={16} className="text-violet-600" /> Credit / Debit Card
+              </label>
+              <button
+                type="button"
+                onClick={() => handleFull('card')}
+                className="text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
+              >
+                Full ({money(remaining > 0 ? remaining : total)})
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                type="text"
+                placeholder="Card Ref / Last 4 (optional)"
+                value={payment.cardReference || ''}
+                disabled={payment.isNotPaid}
+                onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, cardReference: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+              />
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  value={payment.card || ''}
+                  disabled={payment.isNotPaid}
+                  onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, card: e.target.value }))}
+                  className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-base font-semibold text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Others */}
+          <div className="p-3 border border-gray-200 rounded-lg bg-white space-y-1 hover:border-purple-300 transition-colors">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                <HelpCircle size={16} className="text-gray-600" /> Others
+              </label>
+              <button
+                type="button"
+                onClick={() => handleFull('other')}
+                className="text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
+              >
+                Full ({money(remaining > 0 ? remaining : total)})
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                type="text"
+                placeholder="Description / Reference"
+                value={payment.otherNote || ''}
+                disabled={payment.isNotPaid}
+                onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, otherNote: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+              />
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  value={payment.other || ''}
+                  disabled={payment.isNotPaid}
+                  onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, other: e.target.value }))}
+                  className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-base font-semibold text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600 disabled:bg-gray-100"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Calculation Card */}
+        <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-lg space-y-1.5 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-600">Total Amount Received:</span>
+            <span className="font-bold text-emerald-700">{money(totalPaid)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-600">Remaining Balance Due:</span>
+            <span className={`font-bold ${remaining > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+              {money(remaining)}
+            </span>
+          </div>
+          <div className="flex justify-between pt-1 border-t border-gray-200 text-xs">
+            <span className="text-gray-500 font-medium">Invoice Status:</span>
+            <span className={`font-bold capitalize ${
+              payment.isNotPaid || totalPaid === 0 ? 'text-yellow-700' : remaining === 0 ? 'text-emerald-700' : 'text-blue-700'
+            }`}>
+              {payment.isNotPaid || totalPaid === 0 ? 'Unpaid' : remaining === 0 ? 'Paid in Full' : 'Partial Payment'}
+            </span>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-md cursor-pointer"
+          >
+            Back to Invoice
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={onConfirm}
+            className="px-5 py-2 text-sm font-bold text-white bg-purple-600 hover:bg-gray-950 rounded-md shadow cursor-pointer disabled:opacity-70 transition-colors flex items-center gap-1.5"
+          >
+            {saving ? 'Saving...' : 'Complete & Save Invoice'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { company, can } = useAuth();
   const money = useMoney();
   const [number, setNumber] = useState('');
+  const [payment, setPayment] = useState({
+    isNotPaid: false,
+    cash: '',
+    cheque: '',
+    chequeNumber: '',
+    bank: '',
+    bankReference: '',
+    card: '',
+    cardReference: '',
+    other: '',
+    otherNote: '',
+  });
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [form, setForm] = useState({
     invoiceDate: today(),
     dueDate: '',
@@ -281,18 +603,29 @@ export default function InvoiceCreate() {
   );
   const total = round2(lines.reduce((a, l) => a + l.amount, 0));
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const validateInvoice = () => {
     setErrors({});
     const filled = lines.filter((l) => l.product);
     if (!filled.length) {
       setErrors({ items: 'Add at least one product' });
-      return;
+      return null;
     }
+    if (!form.customerName.trim()) {
+      setErrors({ customerName: 'Customer name is required' });
+      return null;
+    }
+    return filled;
+  };
+
+  const handleSave = async (overridePayment) => {
+    const filled = validateInvoice();
+    if (!filled) return;
     setSaving(true);
+    const activePayment = overridePayment !== undefined ? overridePayment : payment;
     try {
       const { data } = await api.post('/invoices', {
         ...form,
+        payment: activePayment,
         items: filled.map((l) => ({
           productId: l.product.id,
           description: l.description,
@@ -301,9 +634,9 @@ export default function InvoiceCreate() {
         })),
       });
       toast.success(`Invoice ${data.invoiceNumber} created`);
+      setPaymentModalOpen(false);
       navigate(`/admin/invoices/view/${data.id}`);
     } catch (err) {
-      // Map server item indexes (of filled rows) back onto row keys.
       const mapped = {};
       for (const [k, v] of Object.entries(err.errors || {})) {
         const m = k.match(/^items\.(\d+)\.(\w+)$/);
@@ -317,9 +650,21 @@ export default function InvoiceCreate() {
     }
   };
 
+  const handleDone = (e) => {
+    if (e) e.preventDefault();
+    const filled = validateInvoice();
+    if (!filled) return;
+    setPaymentModalOpen(true);
+  };
+
+  const handleSaveUnpaid = (e) => {
+    if (e) e.preventDefault();
+    handleSave({ isNotPaid: true });
+  };
+
   return (
     <div className="md:p-4 min-h-screen border border-gray-200 rounded">
-      <form onSubmit={submit}>
+      <form onSubmit={handleDone}>
         <div className="max-w-7xl mx-auto space-y-4 p-2">
           <div className="flex justify-between items-center mb-2">
             <h1 className="text-2xl font-bold text-gray-950 ">New Invoice</h1>
@@ -485,20 +830,57 @@ export default function InvoiceCreate() {
                 className="mt-1 border border-gray-300 rounded-md px-4 py-2 w-full text-gray-950 focus:outline-none focus:ring-1 focus:ring-purple-600"
               />
             </div>
-            <div className="bg-white p-4 rounded-lg border border-gray-200 space-y-2 text-sm self-start">
+            <div className="bg-white p-4 rounded-lg border border-gray-200 space-y-3 text-sm self-start">
               <div className="flex justify-between text-lg font-bold text-gray-950">
                 <span>Invoice Total</span>
-                <span>{money(total)}</span>
+                <span className="text-purple-700">{money(total)}</span>
+              </div>
+              <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
+                <span className="text-xs text-gray-500 font-medium">Payment Option:</span>
+                <button
+                  type="button"
+                  onClick={handleDone}
+                  className="text-xs font-semibold text-purple-600 hover:text-purple-800 cursor-pointer underline flex items-center gap-1"
+                >
+                  {payment.isNotPaid || (!payment.cash && !payment.check && !payment.zelle && !payment.card)
+                    ? 'Payment (Not Paid / Enter)'
+                    : 'Payment entered (Edit)'}
+                </button>
               </div>
             </div>
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end items-center gap-2">
             <CancelButton onClick={() => navigate('/admin/invoices')} />
-            <SubmitButton isLoading={saving}>{saving ? 'Saving...' : 'Save Invoice'}</SubmitButton>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={handleSaveUnpaid}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-md shadow-sm cursor-pointer transition-colors"
+            >
+              Save as Unpaid
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={handleDone}
+              className="px-6 py-2.5 text-base font-bold text-white bg-purple-600 hover:bg-gray-950 rounded-md shadow cursor-pointer transition-colors flex items-center gap-2"
+            >
+              Done
+            </button>
           </div>
         </div>
       </form>
+      <InvoicePaymentModal
+        isOpen={paymentModalOpen}
+        onClose={() => setPaymentModalOpen(false)}
+        total={total}
+        payment={payment}
+        setPayment={setPayment}
+        onConfirm={() => handleSave()}
+        saving={saving}
+        customerName={form.customerName}
+      />
       <MatrixGridModal matrixId={grid?.matrixId} priceField={level.field} onClose={() => setGrid(null)} onAdd={addFromGrid} />
     </div>
   );

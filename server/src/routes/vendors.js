@@ -19,12 +19,13 @@ const schema = z.object({
 
 const TOTALS = `
   (SELECT coalesce(sum(total), 0) FROM receivings x WHERE x.vendor_id = v.id) AS bought,
-  (SELECT coalesce(sum(total), 0) FROM receivings x WHERE x.vendor_id = v.id AND x.status = 'unpaid') AS owed`;
+  (SELECT coalesce(sum(paid_amount), 0) FROM receivings x WHERE x.vendor_id = v.id) AS paid,
+  (SELECT coalesce(sum(GREATEST(0, total - paid_amount)), 0) FROM receivings x WHERE x.vendor_id = v.id AND x.status != 'paid') AS owed`;
 
 const out = (v) => ({
   id: v.id, name: v.name, company: v.company, email: v.email, phone: v.phone, address: v.address,
   notes: v.notes, status: v.status, createdAt: v.created_at,
-  ...(v.bought !== undefined ? { totals: { bought: v.bought, owed: v.owed } } : {}),
+  ...(v.bought !== undefined ? { totals: { bought: Number(v.bought || 0), paid: Number(v.paid || 0), owed: Number(v.owed || 0) } } : {}),
 });
 
 r.get('/', requirePerm('receiving', 'view'), h(async (req, res) => {
@@ -83,6 +84,116 @@ r.delete('/:id', requirePerm('receiving', 'delete'), h(async (req, res) => {
   const { rowCount } = await query(`DELETE FROM vendors WHERE id=$1`, [req.params.id]);
   if (!rowCount) return fail(res, 404, 'Vendor not found');
   ok(res, null, 'Vendor deleted');
+}));
+
+// Record payment (full or portion: check, cash, wire, etc.) to vendor
+// Automatically applies FIFO across unpaid and partial receivings
+r.post('/:id/payments', requirePerm('receiving', 'edit'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Vendor not found');
+  const amount = Number(req.body?.amount);
+  if (!amount || amount <= 0) return fail(res, 422, 'Enter a valid payment amount greater than 0');
+
+  const { rows: vRows } = await query(`SELECT * FROM vendors WHERE id=$1`, [req.params.id]);
+  if (!vRows.length) return fail(res, 404, 'Vendor not found');
+  const vendor = vRows[0];
+
+  const paymentMethod = req.body?.paymentMethod || 'cash';
+  const reference = String(req.body?.reference || '').trim();
+  const notes = String(req.body?.notes || '').trim();
+  const paymentDate = req.body?.paymentDate || new Date().toISOString().slice(0, 10);
+
+  // FIFO settlement across unpaid and partial receivings
+  const { rows: rRows } = await query(
+    `SELECT * FROM receivings
+     WHERE vendor_id = $1 AND status IN ('unpaid', 'partial')
+     ORDER BY received_date ASC, created_at ASC`,
+    [vendor.id],
+  );
+
+  let unallocated = amount;
+  const clearedReceivings = [];
+
+  for (const rcv of rRows) {
+    if (unallocated <= 0) break;
+    const total = Number(rcv.total);
+    const currentPaid = Number(rcv.paid_amount || 0);
+    const remainingDue = Math.max(0, total - currentPaid);
+    if (remainingDue <= 0) continue;
+
+    const alloc = Math.min(unallocated, remainingDue);
+    const newPaid = Math.round((currentPaid + alloc) * 100) / 100;
+    const newStatus = newPaid >= total ? 'paid' : (newPaid > 0 ? 'partial' : 'unpaid');
+
+    await query(
+      `UPDATE receivings SET paid_amount = $1, status = $2 WHERE id = $3`,
+      [newPaid, newStatus, rcv.id],
+    );
+
+    clearedReceivings.push({
+      id: rcv.id,
+      receiving_number: rcv.receiving_number,
+      allocated: alloc,
+      new_paid: newPaid,
+      status: newStatus,
+    });
+
+    unallocated = Math.round((unallocated - alloc) * 100) / 100;
+  }
+
+  // Create payment record in vendor_payments
+  const pSeq = (await query(`SELECT nextval('vendor_payment_seq') AS n`)).rows[0].n;
+  const paymentNumber = `VPAY_${String(pSeq).padStart(6, '0')}`;
+
+  const { rows: pRows } = await query(
+    `INSERT INTO vendor_payments (
+      payment_number, vendor_id, vendor_name, amount, payment_date,
+      payment_method, reference, notes, created_by
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    RETURNING *`,
+    [
+      paymentNumber,
+      vendor.id,
+      vendor.name,
+      amount,
+      paymentDate,
+      paymentMethod,
+      reference,
+      notes,
+      req.user?.id || null,
+    ],
+  );
+
+  ok(
+    res,
+    {
+      payment: pRows[0],
+      clearedReceivings,
+      unallocatedAmount: unallocated,
+    },
+    'Vendor balance updated successfully',
+  );
+}));
+
+// Vendor statement: returns vendor summary, receivings, and payment history
+r.get('/:id/statement', requirePerm('receiving', 'view'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Vendor not found');
+  const { rows: vRows } = await query(`SELECT v.*, ${TOTALS} FROM vendors v WHERE v.id=$1`, [req.params.id]);
+  if (!vRows.length) return fail(res, 404, 'Vendor not found');
+  const vendor = out(vRows[0]);
+
+  const { rows: receivings } = await query(
+    `SELECT id, receiving_number, vendor_invoice_no, received_date, total, paid_amount, status
+     FROM receivings WHERE vendor_id=$1 ORDER BY received_date DESC, created_at DESC`,
+    [vendor.id],
+  );
+
+  const { rows: payments } = await query(
+    `SELECT id, payment_number, amount, payment_date, payment_method, reference, notes, created_at
+     FROM vendor_payments WHERE vendor_id=$1 ORDER BY payment_date DESC, created_at DESC`,
+    [vendor.id],
+  );
+
+  ok(res, { vendor, receivings, payments });
 }));
 
 export default r;
