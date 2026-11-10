@@ -18,6 +18,7 @@ const MENU = [
       { to: '/admin/products', title: 'Products', slug: 'products', addPath: '/admin/products/new' },
       { to: '/admin/matrix', title: 'Matrix Items', slug: 'products', addPath: '/admin/matrix/new' },
       { to: '/admin/categories', title: 'Categories', slug: 'categories' },
+      { to: '/admin/brands', title: 'Brands', slug: 'categories' },
     ],
   },
   { type: 'link', to: '/admin/customers', icon: <Contact size={16} />, title: 'Customers', slug: 'customers' },
@@ -37,6 +38,7 @@ const MENU = [
     title: 'Receiving Inventory',
     children: [
       { to: '/admin/receiving', title: 'Receivings', slug: 'receiving', addPath: '/admin/receiving/new' },
+      { to: '/admin/purchase-orders', title: 'Purchase Orders', slug: 'receiving', addPath: '/admin/purchase-orders/new' },
       { to: '/admin/vendors', title: 'Vendors', slug: 'receiving' },
     ],
   },
@@ -46,7 +48,7 @@ const MENU = [
     icon: <ArrowDownUp size={16} />,
     title: 'Import / Export',
     slug: null,
-    check: (can) => can('products') || can('customers'),
+    check: (can) => can('import_export') && (can('products') || can('customers')),
   },
   { type: 'header', title: 'Roles & Permissions' },
   {

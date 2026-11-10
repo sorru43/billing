@@ -7,7 +7,7 @@ import { CancelButton, Field, Loader, SubmitButton, Toggle, inputCls } from '../
 
 const EMPTY = {
   name: '', cost: '', selling_price: '', top_customer_price: '', jobber_price: '', quantity: '0',
-  barcode: '', description: '', category_id: '', status: true,
+  barcode: '', description: '', category_id: '', brand_id: '', status: true, low_stock_alert: '',
 };
 
 // EAN-13 with a valid check digit, so generated codes scan on standard readers.
@@ -24,11 +24,13 @@ export default function ProductForm() {
   const [form, setForm] = useState(EMPTY);
   const [errors, setErrors] = useState({});
   const [categories, setCategories] = useState([]);
+  const [brands, setBrands] = useState([]);
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api.get('/categories/options').then((r) => setCategories(r.data)).catch(() => {});
+    api.get('/brands/options').then((r) => setBrands(r.data)).catch(() => {});
     if (id) {
       api
         .get(`/products/${id}`)
@@ -39,6 +41,7 @@ export default function ProductForm() {
             ...EMPTY,
             ...Object.fromEntries(Object.keys(EMPTY).map((k) => [k, data[k] ?? EMPTY[k]])),
             category_id: data.category_id || '',
+            brand_id: data.brand_id || '',
           });
         })
         .catch((e) => toast.error(e.message))
@@ -101,8 +104,39 @@ export default function ProductForm() {
               </p>
             )}
           </Field>
+          <Field label="Brand" htmlFor="brand_id" error={errors.brand_id}>
+            <select id="brand_id" value={form.brand_id || ''} onChange={set('brand_id')} className={`${inputCls} bg-white h-[42px]`}>
+              <option value="">No brand</option>
+              {brands.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+            {brands.length === 0 && can('categories', 'create') && (
+              <p className="mt-1 text-xs text-gray-500">
+                No brands yet.{' '}
+                <button type="button" className="text-purple-600 font-semibold cursor-pointer" onClick={() => navigate('/admin/brands')}>
+                  Add brands
+                </button>
+              </p>
+            )}
+          </Field>
           <Field label="Quantity" required htmlFor="quantity" error={errors.quantity}>
-            <input id="quantity" type="number" min="0" step="1" required value={form.quantity} onChange={set('quantity')} className={inputCls} />
+            <input id="quantity" type="number" step="1" required value={form.quantity} onChange={set('quantity')} className={inputCls} />
+          </Field>
+          <Field label="Low Stock Alert at (blank = 5)" htmlFor="low_stock_alert" error={errors.low_stock_alert}>
+            <input
+              id="low_stock_alert"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="5"
+              value={form.low_stock_alert}
+              onChange={set('low_stock_alert')}
+              className={inputCls}
+            />
+            <p className="text-xs text-gray-500 mt-1">Alert when stock drops to this many. Set it higher for top sellers and items that take long to arrive.</p>
           </Field>
           {money('cost', 'Cost')}
           {money('selling_price', 'Selling Price')}

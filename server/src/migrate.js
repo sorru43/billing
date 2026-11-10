@@ -286,6 +286,53 @@ CREATE INDEX IF NOT EXISTS vp_name_idx ON vendor_payments(lower(trim(vendor_name
 ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS reference text DEFAULT '';
 ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS receiving_id uuid;
 
+-- 2026-11-09: overpayments are kept as credit and used by the next invoice / receiving.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_balance numeric(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE vendors ADD COLUMN IF NOT EXISTS credit_balance numeric(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS reference text NOT NULL DEFAULT '';
+-- A receiving saved as "paid" must count as paid in vendor totals.
+UPDATE receivings SET paid_amount = total WHERE status = 'paid' AND coalesce(paid_amount, 0) = 0;
+
+-- Per-product low stock alert level (NULL = use the default of 5, see stock.js).
+ALTER TABLE products ADD COLUMN IF NOT EXISTS low_stock_alert integer;
+
+-- Purchase orders to vendors (nothing changes stock until the PO is received).
+CREATE SEQUENCE IF NOT EXISTS purchase_order_seq START 1;
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  po_number     text NOT NULL UNIQUE,
+  vendor_id     uuid REFERENCES vendors(id) ON DELETE SET NULL,
+  vendor_name   text NOT NULL,
+  order_date    date NOT NULL DEFAULT CURRENT_DATE,
+  status        text NOT NULL DEFAULT 'open',   -- open | received | cancelled
+  items         jsonb NOT NULL,
+  total         numeric(14,2) NOT NULL,
+  notes         text NOT NULL DEFAULT '',
+  receiving_id  uuid REFERENCES receivings(id) ON DELETE SET NULL,
+  created_by    uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS po_vendor_idx ON purchase_orders(vendor_id);
+ALTER TABLE receivings ADD COLUMN IF NOT EXISTS purchase_order_id uuid REFERENCES purchase_orders(id) ON DELETE SET NULL;
+
+-- 2026-11-10: brands (the company that makes a product). Managed with the Categories permission.
+CREATE TABLE IF NOT EXISTS brands (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        text NOT NULL,
+  status      boolean NOT NULL DEFAULT true,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS brands_name_uq ON brands (lower(name));
+ALTER TABLE products ADD COLUMN IF NOT EXISTS brand_id uuid REFERENCES brands(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS products_brand_idx ON products(brand_id);
+ALTER TABLE product_matrices ADD COLUMN IF NOT EXISTS brand_id uuid REFERENCES brands(id) ON DELETE SET NULL;
+-- Default low stock alert for a matrix's new variants (each variant keeps its own products.low_stock_alert).
+ALTER TABLE product_matrices ADD COLUMN IF NOT EXISTS low_stock_alert integer;
+-- When a PO was last emailed to the vendor.
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS emailed_at timestamptz;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS emailed_to text NOT NULL DEFAULT '';
+
 CREATE TABLE IF NOT EXISTS settings (
   key    text PRIMARY KEY,
   value  jsonb NOT NULL

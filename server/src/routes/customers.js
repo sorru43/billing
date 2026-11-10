@@ -4,6 +4,7 @@ import { query, tx } from '../db.js';
 import { requirePerm, can } from '../auth.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 import { toCsv } from '../pdf.js';
+import { receiveCustomerPayment } from '../balance.js';
 
 const r = Router();
 
@@ -34,26 +35,31 @@ const TOTALS_SQL = `
   (SELECT coalesce(sum(total), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_total,
   (SELECT coalesce(sum(CASE WHEN i.status = 'paid' THEN i.total ELSE coalesce(i.paid_amount, 0) END), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_paid,
   (SELECT coalesce(sum(CASE WHEN i.status = 'paid' THEN 0 ELSE (i.total - coalesce(i.paid_amount, 0)) END), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_unpaid,
-  (SELECT coalesce(sum(total), 0) FROM returns rt WHERE rt.customer_id = c.id AND rt.settlement = 'credit') AS credits`;
+  (SELECT coalesce(sum(total), 0) FROM returns rt WHERE rt.customer_id = c.id AND rt.settlement = 'credit') AS credits,
+  c.credit_balance AS credit_balance`;
 const round2 = (n) => Math.round(n * 100) / 100;
 const totalsOut = (c) => {
   const unpaid = round2(Number(c.inv_unpaid) || 0);
   const credits = round2(Number(c.credits) || 0);
+  const creditBalance = round2(Number(c.credit_balance) || 0);
   return {
     invoiceCount: c.inv_count,
     total: round2(Number(c.inv_total) || 0),
     paid: round2(Number(c.inv_paid) || 0),
     unpaid,
     credits,
-    balance: Math.max(0, round2(unpaid - credits)),
+    creditBalance, // money paid in advance, used up by the next invoice
+    balance: Math.max(0, round2(unpaid - credits - creditBalance)),
   };
 };
 
 const paymentSchema = z.object({
   amount: z.coerce.number().positive('Amount must be greater than 0').max(1e11),
   paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').default(() => new Date().toISOString().slice(0, 10)),
-  paymentMethod: z.enum(['cash', 'card', 'bank_transfer', 'cheque', 'other']).default('cash'),
+  paymentMethod: z.enum(['cash', 'check', 'zelle', 'bank_transfer', 'card', 'other', 'cheque', 'bank']).default('cash'),
+  reference: z.string().trim().max(200).default(''),
   notes: z.string().max(2000).default(''),
+  invoiceId: z.string().uuid().optional().or(z.literal('')).or(z.null()).transform((v) => v || null),
 });
 
 const canUpdateBalance = (req) =>
@@ -99,7 +105,7 @@ const EXPORT_COLUMNS = [
   { key: 'priceLevel', label: 'Price Level' }, { key: 'notes', label: 'Notes' }, { key: 'statusText', label: 'Status' },
 ];
 
-r.get('/export', requirePerm('customers', 'view'), h(async (req, res) => {
+r.get('/export', requirePerm('import_export', 'view'), requirePerm('customers', 'view'), h(async (req, res) => {
   const { rows } = await query(`SELECT * FROM customers ORDER BY name`);
   const csv = toCsv(EXPORT_COLUMNS, rows.map((c) => ({
     ...out(c),
@@ -136,12 +142,12 @@ r.get('/:id/statement', requirePerm('customers', 'view'), h(async (req, res) => 
     [req.params.id],
   )).rows.map((x) => ({ id: x.id, returnNumber: x.return_number, invoiceNumber: x.invoice_number, settlement: x.settlement, total: x.total, createdAt: x.created_at }));
   const payments = (await query(
-    `SELECT id, payment_number, amount, payment_date, payment_method, notes, created_at FROM customer_payments
+    `SELECT id, payment_number, amount, payment_date, payment_method, reference, notes, created_at FROM customer_payments
       WHERE customer_id=$1 ORDER BY payment_date DESC, created_at DESC LIMIT 500`,
     [req.params.id],
   )).rows.map((p) => ({
     id: p.id, paymentNumber: p.payment_number, amount: p.amount, paymentDate: p.payment_date,
-    paymentMethod: p.payment_method, notes: p.notes, createdAt: p.created_at,
+    paymentMethod: p.payment_method, reference: p.reference, notes: p.notes, createdAt: p.created_at,
   }));
   ok(res, {
     customer: out(rows[0]),
@@ -153,81 +159,33 @@ r.get('/:id/statement', requirePerm('customers', 'view'), h(async (req, res) => 
   });
 }));
 
-// Update customer balance: records payment and deducts from unpaid bills (FIFO: oldest bill first)
+// Small balance lookup for payment screens (also allowed for cashiers who take payments on invoices).
+r.get('/:id/balance', h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');
+  if (!canUpdateBalance(req)) return fail(res, 403, 'You do not have permission to view this balance');
+  const { rows } = await query(`SELECT c.*, ${TOTALS_SQL} FROM customers c WHERE c.id=$1`, [req.params.id]);
+  if (!rows.length) return fail(res, 404, 'Customer not found');
+  ok(res, { customer: out(rows[0]), totals: totalsOut(rows[0]) });
+}));
+
+// Receive a payment: applied to the chosen invoice first (if any), then oldest unpaid
+// invoices first; anything left over is kept as credit for the next invoice.
 r.post('/:id/payments', h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');
   if (!canUpdateBalance(req)) return fail(res, 403, 'You do not have permission to update customer balance');
-
   const b = validate(paymentSchema, req.body, res);
   if (!b) return;
-
-  const result = await tx(async (client) => {
-    const { rows: custRows } = await client.query(`SELECT * FROM customers WHERE id=$1 FOR UPDATE`, [req.params.id]);
-    if (!custRows.length) return { error: 'Customer not found', status: 404 };
-    const customer = custRows[0];
-
-    const pSeq = (await client.query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
-    const paymentNumber = `PAY_${String(pSeq).padStart(6, '0')}`;
-
-    const { rows: payRows } = await client.query(
-      `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [paymentNumber, customer.id, customer.name, b.amount, b.paymentDate, b.paymentMethod, b.notes, req.user?.id || null],
-    );
-
-    // Oldest bill first (FIFO): clear older pending bills before newer ones
-    const { rows: invoices } = await client.query(
-      `SELECT id, invoice_number, total, coalesce(paid_amount, 0) AS paid_amount, status
-       FROM invoices
-       WHERE customer_id = $1 AND status <> 'paid'
-       ORDER BY invoice_date ASC, created_at ASC
-       FOR UPDATE`,
-      [customer.id],
-    );
-
-    let remaining = b.amount;
-    const clearedInvoices = [];
-
-    for (const inv of invoices) {
-      if (remaining <= 0) break;
-      const invTotal = Number(inv.total);
-      const currentPaid = Number(inv.paid_amount);
-      const due = round2(invTotal - currentPaid);
-      if (due <= 0) continue;
-
-      const toPay = Math.min(remaining, due);
-      const newPaid = round2(currentPaid + toPay);
-      const newStatus = newPaid >= invTotal ? 'paid' : 'partial';
-
-      await client.query(
-        `UPDATE invoices SET paid_amount = $1, status = $2 WHERE id = $3`,
-        [newPaid, newStatus, inv.id],
-      );
-
-      // Keep sales record table synchronized if record exists
-      await client.query(
-        `UPDATE customer_sales_records SET paid_amount = $1, status = $2 WHERE invoice_id = $3`,
-        [newPaid, newStatus, inv.id],
-      );
-
-      clearedInvoices.push({
-        invoiceNumber: inv.invoice_number,
-        applied: toPay,
-        status: newStatus,
-      });
-
-      remaining = round2(remaining - toPay);
-    }
-
-    return {
-      payment: payRows[0],
-      clearedInvoices,
-      unallocatedAmount: remaining > 0 ? remaining : 0,
-    };
-  });
-
+  const result = await tx((client) => receiveCustomerPayment(client, {
+    customerId: req.params.id, amount: b.amount, method: b.paymentMethod, date: b.paymentDate,
+    reference: b.reference, notes: b.notes, userId: req.user?.id, invoiceId: b.invoiceId,
+  }));
   if (result.error) return fail(res, result.status || 400, result.error);
-  ok(res, result, 'Customer balance updated successfully');
+  ok(res, {
+    payment: result.payment,
+    clearedInvoices: result.applied.map((a) => ({ invoiceNumber: a.number, applied: a.applied, status: a.status })),
+    creditAdded: result.creditAdded,
+    creditBalance: result.creditBalance,
+  }, 'Payment recorded');
 }));
 
 r.post('/', requirePerm('customers', 'create'), h(async (req, res) => {
@@ -335,7 +293,7 @@ const clean = (v) => String(v ?? '').replace(/^'(?=[=+\-@])/, '').trim();
 
 const importBody = express.text({ type: () => true, limit: '3mb' });
 
-r.post('/import', requirePerm('customers', 'create'), importBody, h(async (req, res) => {
+r.post('/import', requirePerm('import_export', 'create'), requirePerm('customers', 'create'), importBody, h(async (req, res) => {
   const mode = req.query.mode === 'update' ? 'update' : 'skip';
   const dryRun = req.query.dryRun === '1';
   if (mode === 'update' && !can(req, 'customers', 'edit')) return fail(res, 403, 'Updating existing customers needs edit permission');

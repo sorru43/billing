@@ -184,6 +184,7 @@ export function InvoicePaymentModal({
   onConfirm,
   saving,
   customerName,
+  customerId,
 }) {
   const money = useMoney();
   const cashVal = Number(payment.cash) || 0;
@@ -451,6 +452,12 @@ export function InvoicePaymentModal({
               {money(remaining)}
             </span>
           </div>
+          {totalPaid > total && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-600">{customerId ? 'Extra (pays older bills, rest kept as credit):' : 'Change to give back:'}</span>
+              <span className="font-bold text-purple-700">{money(round2(totalPaid - total))}</span>
+            </div>
+          )}
           <div className="flex justify-between pt-1 border-t border-gray-200 text-xs">
             <span className="text-gray-500 font-medium">Invoice Status:</span>
             <span className={`font-bold capitalize ${
@@ -518,6 +525,10 @@ export default function InvoiceCreate() {
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [grid, setGrid] = useState(null); // { matrixId, rowKey } while the matrix grid is open
+  const [allowOversell, setAllowOversell] = useState(false); // admin setting: sell more than is in stock
+  useEffect(() => {
+    api.get('/settings/inventory').then((r) => setAllowOversell(r.data.allowOutOfStockSales)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     api.get('/invoices/next-number').then((r) => {
@@ -768,7 +779,12 @@ export default function InvoiceCreate() {
                           error={errors[`${l.key}.productId`]}
                           onPick={(p) => pickProduct(l.key, p)}
                         />
-                        {l.product && <p className="text-xs text-gray-500 mt-1">{l.product.quantity} in stock</p>}
+                        {l.product && (
+                          <p className={`text-xs mt-1 ${Number(l.quantity) > l.product.quantity ? (allowOversell ? 'text-amber-700' : 'text-red-600') : 'text-gray-500'}`}>
+                            {l.product.quantity} in stock
+                            {Number(l.quantity) > l.product.quantity && (allowOversell ? ' · selling more than in stock' : ' · not enough stock')}
+                          </p>
+                        )}
                       </td>
                       <td className="px-3 py-3">
                         <textarea
@@ -880,8 +896,9 @@ export default function InvoiceCreate() {
         onConfirm={() => handleSave()}
         saving={saving}
         customerName={form.customerName}
+        customerId={form.customerId}
       />
-      <MatrixGridModal matrixId={grid?.matrixId} priceField={level.field} onClose={() => setGrid(null)} onAdd={addFromGrid} />
+      <MatrixGridModal matrixId={grid?.matrixId} priceField={level.field} onClose={() => setGrid(null)} onAdd={addFromGrid} allowOversell={allowOversell} />
     </div>
   );
 }

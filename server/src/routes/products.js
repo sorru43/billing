@@ -4,6 +4,7 @@ import { query, tx } from '../db.js';
 import { requirePerm, can } from '../auth.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 import { toCsv } from '../pdf.js';
+import { ALERT_SQL, DEFAULT_ALERT } from '../stock.js';
 import { parseCsv } from './customers.js';
 
 const r = Router();
@@ -11,21 +12,32 @@ const r = Router();
 const price = (label) =>
   z.coerce.number({ error: `${label} must be a number` }).min(0, `${label} cannot be negative`).max(1e11);
 
+const alertLevel = z.preprocess(
+  (v) => (v === '' || v === undefined ? null : v),
+  z.coerce.number().int('Alert level must be a whole number').min(0, 'Alert level cannot be negative').max(1e9).nullable(),
+).default(null);
+
 const schema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(200),
   cost: price('Cost'),
   selling_price: price('Selling price'),
   top_customer_price: price('Top customer price'),
   jobber_price: price('Jobber price'),
-  quantity: z.coerce.number().int('Quantity must be a whole number').min(0, 'Quantity cannot be negative').max(1e9),
+  // may be below zero when out-of-stock selling is on (sold before the stock was received)
+  quantity: z.coerce.number().int('Quantity must be a whole number').min(-1e9).max(1e9),
   barcode: z.string().trim().max(64).regex(/^[A-Za-z0-9\-_.]*$/, 'Barcode may only contain letters, numbers, - _ .').default(''),
   description: z.string().max(5000).default(''),
   category_id: z.string().uuid('Category is required'),
+  // optional: blank = no brand
+  brand_id: z.preprocess((v) => (v === '' || v === undefined ? null : v), z.string().uuid('Choose a brand').nullable()).default(null),
   status: z.boolean().default(true),
+  // blank = use the default alert level
+  low_stock_alert: alertLevel,
 });
 
-const SELECT = `SELECT p.*, c.name AS category_name, m.name AS matrix_name, m.status AS matrix_status
-  FROM products p LEFT JOIN categories c ON c.id = p.category_id LEFT JOIN product_matrices m ON m.id = p.matrix_id`;
+const SELECT = `SELECT p.*, c.name AS category_name, b.name AS brand_name, m.name AS matrix_name, m.status AS matrix_status
+  FROM products p LEFT JOIN categories c ON c.id = p.category_id LEFT JOIN brands b ON b.id = p.brand_id
+  LEFT JOIN product_matrices m ON m.id = p.matrix_id`;
 
 const out = (p) => ({
   id: p.id,
@@ -39,7 +51,11 @@ const out = (p) => ({
   description: p.description,
   category_id: p.category_id,
   category: p.category_id ? { id: p.category_id, name: p.category_name } : null,
+  brand_id: p.brand_id,
+  brand: p.brand_id ? { id: p.brand_id, name: p.brand_name } : null,
   status: p.status,
+  low_stock_alert: p.low_stock_alert,
+  alertLevel: p.low_stock_alert ?? DEFAULT_ALERT,
   matrix: p.matrix_id ? { id: p.matrix_id, name: p.matrix_name, option1: p.option1, option2: p.option2 } : null,
   createdAt: p.created_at,
   updatedAt: p.updated_at,
@@ -51,14 +67,18 @@ r.get('/', requirePerm('products', 'view'), h(async (req, res) => {
   const params = [];
   if (search) {
     params.push(likeEscape(search));
-    conds.push(`(p.name ILIKE $1 OR p.barcode ILIKE $1 OR c.name ILIKE $1)`);
+    conds.push(`(p.name ILIKE $1 OR p.barcode ILIKE $1 OR c.name ILIKE $1 OR b.name ILIKE $1)`);
   }
   if (req.query.category && isUuid(req.query.category)) {
     params.push(req.query.category);
     conds.push(`p.category_id = $${params.length}`);
   }
+  if (req.query.brand && isUuid(req.query.brand)) {
+    params.push(req.query.brand);
+    conds.push(`p.brand_id = $${params.length}`);
+  }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-  const total = (await query(`SELECT count(*)::int n FROM products p LEFT JOIN categories c ON c.id=p.category_id ${where}`, params)).rows[0].n;
+  const total = (await query(`SELECT count(*)::int n FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN brands b ON b.id=p.brand_id ${where}`, params)).rows[0].n;
   const { rows } = await query(`${SELECT} ${where} ORDER BY p.created_at DESC LIMIT ${limit} OFFSET ${offset}`, params);
   ok(res, { products: rows.map(out), pagination: pagination(total, page, limit) });
 }));
@@ -94,6 +114,7 @@ const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const HEADER_ALIASES = {
   name: ['name', 'productname', 'product', 'item', 'itemname', 'title'],
   category: ['category', 'categoryname', 'cat', 'group', 'productcategory'],
+  brand: ['brand', 'brandname', 'make', 'manufacturer', 'company'],
   barcode: ['barcode', 'sku', 'code', 'upc', 'ean', 'productcode', 'itemcode', 'barcodeno'],
   cost: ['cost', 'costprice', 'purchaseprice', 'buyprice', 'unitcost'],
   sellingPrice: ['sellingprice', 'selling', 'price', 'retailprice', 'saleprice', 'unitprice'],
@@ -136,6 +157,7 @@ const slugify = (text) =>
 const EXPORT_COLUMNS = [
   { key: 'name', label: 'Product Name' },
   { key: 'category_name', label: 'Category' },
+  { key: 'brand_name', label: 'Brand' },
   { key: 'barcode', label: 'Barcode' },
   { key: 'cost', label: 'Cost' },
   { key: 'selling_price', label: 'Selling Price' },
@@ -146,11 +168,12 @@ const EXPORT_COLUMNS = [
   { key: 'statusText', label: 'Status' },
 ];
 
-r.get('/export', requirePerm('products', 'view'), h(async (req, res) => {
+r.get('/export', requirePerm('import_export', 'view'), requirePerm('products', 'view'), h(async (req, res) => {
   const { rows } = await query(
-    `SELECT p.*, c.name AS category_name
+    `SELECT p.*, c.name AS category_name, b.name AS brand_name
      FROM products p
      LEFT JOIN categories c ON c.id = p.category_id
+     LEFT JOIN brands b ON b.id = p.brand_id
      ORDER BY p.name ASC`
   );
   const csv = toCsv(
@@ -164,6 +187,7 @@ r.get('/export', requirePerm('products', 'view'), h(async (req, res) => {
       jobber_price: Number(p.jobber_price || 0).toFixed(2),
       quantity: p.quantity,
       category_name: p.category_name || '',
+      brand_name: p.brand_name || '',
       statusText: p.status ? 'Active' : 'Inactive',
     }))
   );
@@ -174,7 +198,7 @@ r.get('/export', requirePerm('products', 'view'), h(async (req, res) => {
 
 const importBody = express.text({ type: () => true, limit: '3mb' });
 
-r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, res) => {
+r.post('/import', requirePerm('import_export', 'create'), requirePerm('products', 'create'), importBody, h(async (req, res) => {
   const mode = req.query.mode === 'update' ? 'update' : 'skip';
   const dryRun = req.query.dryRun === '1';
   if (mode === 'update' && !can(req, 'products', 'edit')) return fail(res, 403, 'Updating existing products needs edit permission');
@@ -255,6 +279,7 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
 
     const description = String(raw.description || '').slice(0, 5000);
     const categoryName = String(raw.category || '').trim();
+    const brandName = String(raw.brand || '').trim().slice(0, 100);
     const status = raw.status === undefined ? true : parseStatus(raw.status);
 
     const barcodeKey = barcode ? barcode.toLowerCase() : null;
@@ -285,6 +310,7 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
       quantity,
       description,
       categoryName,
+      brandName,
       status,
     });
   });
@@ -332,6 +358,20 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
       }
     }
 
+    // 1b. Brands (created on the fly, like categories). Blank brand = leave as is.
+    const { rows: brandRows } = await client.query(`SELECT id, lower(name) AS lname FROM brands`);
+    const brandByName = new Map(brandRows.map((b) => [b.lname, b.id]));
+    for (const item of valid) {
+      if (!item.brandName) continue;
+      const key = item.brandName.toLowerCase();
+      if (brandByName.has(key)) continue;
+      if (dryRun) brandByName.set(key, '00000000-0000-0000-0000-000000000000');
+      else {
+        const { rows: nb } = await client.query(`INSERT INTO brands (name) VALUES ($1) RETURNING id`, [item.brandName]);
+        brandByName.set(key, nb[0].id);
+      }
+    }
+
     // 2. Existing products
     const { rows: existingProds } = await client.query(
       `SELECT id, name, lower(name) AS lname, lower(barcode) AS lbarcode, category_id FROM products`
@@ -353,6 +393,7 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
         continue;
       }
 
+      const brandId = item.brandName ? brandByName.get(item.brandName.toLowerCase()) : null;
       const categoryId = item.categoryName
         ? catByName.get(item.categoryName.toLowerCase())
         : (match?.category_id || defaultCatId);
@@ -385,6 +426,7 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
              description = COALESCE(NULLIF($8, ''), description),
              category_id = COALESCE($9, category_id),
              status = $10,
+             brand_id = COALESCE($12, brand_id),
              updated_at = now()
            WHERE id = $11`,
           [
@@ -399,6 +441,7 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
             categoryId,
             item.status,
             match.id,
+            brandId,
           ]
         );
       } else {
@@ -418,8 +461,8 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
         if (dryRun) continue;
 
         const { rows: inserted } = await client.query(
-          `INSERT INTO products (name, cost, selling_price, top_customer_price, jobber_price, quantity, barcode, description, category_id, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+          `INSERT INTO products (name, cost, selling_price, top_customer_price, jobber_price, quantity, barcode, description, category_id, status, brand_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
           [
             item.name,
             item.cost,
@@ -431,6 +474,7 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
             item.description,
             categoryId,
             item.status,
+            brandId,
           ]
         );
 
@@ -457,6 +501,7 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
     preview: valid.slice(0, 5).map(({ row, barcodeKey, nameKey, ...p }) => ({
       ...p,
       category: p.categoryName || 'General',
+      brand: p.brandName || '',
     })),
   };
 
@@ -464,6 +509,41 @@ r.post('/import', requirePerm('products', 'create'), importBody, h(async (req, r
     ? 'Preview ready'
     : `Imported: ${summary.created} added, ${summary.updated} updated, ${summary.skipped} skipped, ${errors.length} with errors`;
   ok(res, result, msg);
+}));
+
+// Products to reorder (purchase order screen). Filters:
+//   show = alert (default: at or below each product's alert level) | all (every quantity) | below (quantity < below)
+//   category, brand = uuid filters
+r.get('/low-stock', h(async (req, res) => {
+  if (!can(req, 'products', 'view') && !can(req, 'receiving', 'view')) return fail(res, 403, 'You do not have permission');
+  const show = ['alert', 'all', 'below'].includes(req.query.show) ? req.query.show : 'alert';
+  const conds = ['p.status = true', '(p.matrix_id IS NULL OR m.status)'];
+  const params = [];
+  if (show === 'alert') conds.push(`p.quantity <= ${ALERT_SQL}`);
+  if (show === 'below') {
+    const n = Number(req.query.below);
+    if (!Number.isInteger(n) || n < 0 || n > 1e9) return fail(res, 422, 'Type a whole number to show items with less than that quantity');
+    params.push(n);
+    conds.push(`p.quantity < $${params.length}`);
+  }
+  for (const [key, col] of [['category', 'p.category_id'], ['brand', 'p.brand_id']]) {
+    if (isUuid(req.query[key])) {
+      params.push(req.query[key]);
+      conds.push(`${col} = $${params.length}`);
+    }
+  }
+  const { rows } = await query(
+    `SELECT p.id, p.name, p.barcode, p.quantity, p.cost, ${ALERT_SQL} AS alert_level, c.name AS category_name, b.name AS brand_name
+       FROM products p LEFT JOIN categories c ON c.id = p.category_id LEFT JOIN brands b ON b.id = p.brand_id
+       LEFT JOIN product_matrices m ON m.id = p.matrix_id
+      WHERE ${conds.join(' AND ')}
+      ORDER BY ${show === 'all' ? 'p.name' : `(p.quantity - ${ALERT_SQL}), p.name`} LIMIT 2000`,
+    params,
+  );
+  ok(res, { products: rows.map((p) => ({
+    id: p.id, name: p.name, barcode: p.barcode || '', quantity: p.quantity, cost: Number(p.cost),
+    alertLevel: p.alert_level, category: p.category_name || '', brand: p.brand_name || '',
+  })) });
 }));
 
 r.get('/:id', requirePerm('products', 'view'), h(async (req, res) => {
@@ -475,6 +555,9 @@ r.get('/:id', requirePerm('products', 'view'), h(async (req, res) => {
 
 async function categoryExists(id) {
   return (await query(`SELECT 1 FROM categories WHERE id=$1`, [id])).rowCount > 0;
+}
+async function brandExists(id) {
+  return !id || (await query(`SELECT 1 FROM brands WHERE id=$1`, [id])).rowCount > 0;
 }
 
 function dupError(e, res) {
@@ -489,11 +572,12 @@ r.post('/', requirePerm('products', 'create'), h(async (req, res) => {
   const b = validate(schema, req.body, res);
   if (!b) return;
   if (!(await categoryExists(b.category_id))) return fail(res, 422, 'Invalid category', { category_id: 'Category not found' });
+  if (!(await brandExists(b.brand_id))) return fail(res, 422, 'Invalid brand', { brand_id: 'Brand not found' });
   try {
     const { rows } = await query(
-      `INSERT INTO products (name,cost,selling_price,top_customer_price,jobber_price,quantity,barcode,description,category_id,status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-      [b.name, b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.quantity, b.barcode || null, b.description, b.category_id, b.status],
+      `INSERT INTO products (name,cost,selling_price,top_customer_price,jobber_price,quantity,barcode,description,category_id,status,low_stock_alert,brand_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [b.name, b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.quantity, b.barcode || null, b.description, b.category_id, b.status, b.low_stock_alert, b.brand_id],
     );
     ok(res, { id: rows[0].id }, 'Product created', 201);
   } catch (e) {
@@ -506,13 +590,14 @@ r.put('/:id', requirePerm('products', 'edit'), h(async (req, res) => {
   const b = validate(schema, req.body, res);
   if (!b) return;
   if (!(await categoryExists(b.category_id))) return fail(res, 422, 'Invalid category', { category_id: 'Category not found' });
+  if (!(await brandExists(b.brand_id))) return fail(res, 422, 'Invalid brand', { brand_id: 'Brand not found' });
   const owner = (await query(`SELECT matrix_id FROM products WHERE id=$1`, [req.params.id])).rows[0];
   if (owner?.matrix_id) return fail(res, 422, 'This is a matrix variant — edit it from its matrix item');
   try {
     const { rowCount } = await query(
       `UPDATE products SET name=$1,cost=$2,selling_price=$3,top_customer_price=$4,jobber_price=$5,quantity=$6,barcode=$7,
-              description=$8,category_id=$9,status=$10,updated_at=now() WHERE id=$11`,
-      [b.name, b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.quantity, b.barcode || null, b.description, b.category_id, b.status, req.params.id],
+              description=$8,category_id=$9,status=$10,low_stock_alert=$11,brand_id=$12,updated_at=now() WHERE id=$13`,
+      [b.name, b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.quantity, b.barcode || null, b.description, b.category_id, b.status, b.low_stock_alert, b.brand_id, req.params.id],
     );
     if (!rowCount) return fail(res, 404, 'Product not found');
     ok(res, null, 'Product updated');
@@ -526,6 +611,17 @@ r.patch('/:id/status', requirePerm('products', 'edit'), h(async (req, res) => {
   const { rowCount } = await query(`UPDATE products SET status=$1, updated_at=now() WHERE id=$2`, [Boolean(req.body?.status), req.params.id]);
   if (!rowCount) return fail(res, 404, 'Product not found');
   ok(res, null, 'Product status updated');
+}));
+
+// Set only the low stock alert level. Works for matrix variants too (e.g. one flavor),
+// which can't go through the full product form.
+r.patch('/:id/alert', requirePerm('products', 'edit'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Product not found');
+  const parsed = alertLevel.safeParse(req.body?.lowStockAlert);
+  if (!parsed.success) return fail(res, 422, parsed.error.issues[0]?.message || 'Invalid alert level');
+  const { rowCount } = await query(`UPDATE products SET low_stock_alert=$1, updated_at=now() WHERE id=$2`, [parsed.data, req.params.id]);
+  if (!rowCount) return fail(res, 404, 'Product not found');
+  ok(res, { lowStockAlert: parsed.data, alertLevel: parsed.data ?? DEFAULT_ALERT }, 'Alert level saved');
 }));
 
 r.delete('/:id', requirePerm('products', 'delete'), h(async (req, res) => {

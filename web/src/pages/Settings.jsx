@@ -3,7 +3,7 @@ import { toast } from 'react-toastify';
 import { api } from '../api.js';
 import { useLocation } from 'react-router';
 import { useAuth, logoUrl } from '../auth.jsx';
-import { Field, Loader, SubmitButton, inputCls } from '../components/ui.jsx';
+import { Field, Loader, SubmitButton, Toggle, inputCls } from '../components/ui.jsx';
 
 export function CompanySettings() {
   const { can, refresh } = useAuth();
@@ -87,6 +87,47 @@ export function CompanySettings() {
           editable={editable}
         />
       </div>
+      <InventorySettings editable={editable} />
+    </div>
+  );
+}
+
+// Admin switch: allow invoices to sell more than is in stock (stock goes below zero until it is received).
+function InventorySettings({ editable }) {
+  const [allow, setAllow] = useState(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api.get('/settings/inventory').then((r) => setAllow(r.data.allowOutOfStockSales)).catch((e) => toast.error(e.message));
+  }, []);
+  const change = async (v) => {
+    setSaving(true);
+    try {
+      const r = await api.put('/settings/inventory', { allowOutOfStockSales: v });
+      setAllow(v);
+      toast.success(r.message);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="bg-white p-6 rounded-lg border border-gray-200">
+      <h3 className="text-xl font-bold text-gray-950 mb-4">Inventory</h3>
+      {allow === null ? (
+        <Loader className="h-16" />
+      ) : (
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <p className="font-semibold text-gray-950">Allow selling products that are out of stock</p>
+            <p className="text-sm text-gray-500 mt-1">
+              Turn on when you sometimes sell items before their delivery is entered in the system. Invoices will then accept any quantity and the
+              stock goes below zero (shown in red) until you receive the stock. When off, an invoice cannot sell more than is in stock.
+            </p>
+          </div>
+          <Toggle name="allow-oversell" checked={allow} disabled={!editable || saving} onChange={change} />
+        </div>
+      )}
     </div>
   );
 }

@@ -23,13 +23,13 @@ export default function ImportExport() {
   const { can } = useAuth();
   const money = useMoney();
 
-  const canProductsView = can('products', 'view');
-  const canProductsCreate = can('products', 'create');
-  const canProductsEdit = can('products', 'edit');
+  const canProductsView = can('products', 'view') && can('import_export', 'view');
+  const canProductsCreate = can('products', 'create') && can('import_export', 'create');
+  const canProductsEdit = can('products', 'edit') && can('import_export', 'create');
 
-  const canCustomersView = can('customers', 'view');
-  const canCustomersCreate = can('customers', 'create');
-  const canCustomersEdit = can('customers', 'edit');
+  const canCustomersView = can('customers', 'view') && can('import_export', 'view');
+  const canCustomersCreate = can('customers', 'create') && can('import_export', 'create');
+  const canCustomersEdit = can('customers', 'edit') && can('import_export', 'create');
 
   const initialTab = canProductsView ? 'products' : 'customers';
   const [tab, setTab] = useState(initialTab);

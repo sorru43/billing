@@ -90,7 +90,7 @@ export default function Dashboard() {
               <Card title="Inventory" icon={<Box size={20} />}>
                 <Stat icon={<Box size={18} />} label="Products" value={data.products.total} />
                 {data.categories !== undefined && <Stat icon={<FolderTree size={18} />} label="Categories" value={data.categories} tone="green" />}
-                <Stat icon={<CircleAlert size={18} />} label="Low Stock (≤5)" value={data.products.low_stock} tone="yellow" />
+                <Stat icon={<CircleAlert size={18} />} label="Low Stock" value={data.products.low_stock} tone="yellow" />
                 <Stat icon={<PackageX size={18} />} label="Out of Stock" value={data.products.out_of_stock} tone="red" />
               </Card>
             )}
@@ -138,15 +138,22 @@ export default function Dashboard() {
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
                 <div className="flex justify-between items-center mb-3">
                   <h2 className="text-lg font-bold text-gray-950">Low Stock</h2>
-                  <Link to="/admin/products" className="text-sm text-purple-600 font-medium">
-                    View all →
-                  </Link>
+                  <span className="flex gap-3">
+                    {can('receiving', 'create') && (
+                      <Link to="/admin/purchase-orders/new?lowStock=1" className="text-sm text-purple-600 font-medium">
+                        Order now →
+                      </Link>
+                    )}
+                    <Link to="/admin/products" className="text-sm text-purple-600 font-medium">
+                      View all →
+                    </Link>
+                  </span>
                 </div>
                 {data.lowStock.length === 0 && <p className="text-sm text-gray-500">All products are well stocked.</p>}
                 {data.lowStock.map((p) => (
                   <div key={p.id} className="flex justify-between py-2 border-b border-gray-100 text-sm">
                     <span className="text-gray-950">{p.name}</span>
-                    <span className={`font-semibold ${p.quantity <= 0 ? 'text-red-600' : 'text-yellow-700'}`}>{p.quantity} left</span>
+                    <span className={`font-semibold ${p.quantity <= 0 ? 'text-red-600' : 'text-yellow-700'}`}>{p.quantity} left <span className="text-xs font-normal text-gray-400">(alert at {p.alert_level})</span></span>
                   </div>
                 ))}
               </div>

@@ -34,14 +34,14 @@ export const FullPageLoader = () => (
 
 export function PageHeader({ title, actionLabel, onAction, children }) {
   return (
-    <div className="flex justify-between items-center">
+    <div className="flex flex-wrap justify-between items-center gap-2">
       <h1 className="text-2xl font-bold text-gray-950 ">{title}</h1>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {children}
         {actionLabel && (
           <button
             onClick={onAction}
-            className="bg-purple-600 hover:bg-gray-950 text-white px-2 py-1 rounded-md shadow cursor-pointer flex items-center gap-2"
+            className="bg-purple-600 hover:bg-gray-950 text-white px-2 py-1 rounded-md shadow cursor-pointer flex items-center gap-2 whitespace-nowrap"
           >
             <CirclePlus size={14} /> {actionLabel}
           </button>
@@ -229,7 +229,7 @@ export function Pagination({ pagination, onPage }) {
   );
 }
 
-const SIZES = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-lg', xl: 'max-w-xl', '2xl': 'max-w-2xl', '3xl': 'max-w-3xl' };
+const SIZES = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-lg', xl: 'max-w-xl', '2xl': 'max-w-2xl', '3xl': 'max-w-3xl', '5xl': 'max-w-5xl' };
 
 export function Modal({ isOpen, onClose, title, children, size = '2xl' }) {
   if (!isOpen) return null;
@@ -308,7 +308,7 @@ export function ConfirmModal({
 
 export function Toggle({ name, checked, onChange, disabled = false, className = '' }) {
   return (
-    <label className={`inline-flex items-center cursor-pointer ${disabled ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}>
+    <label className={`relative inline-flex items-center cursor-pointer ${disabled ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}>
       <input
         type="checkbox"
         name={name}
@@ -377,6 +377,9 @@ const STATUS = {
   partial: 'bg-blue-100 text-blue-700',
   active: 'bg-emerald-100 text-emerald-700',
   inactive: 'bg-gray-100 text-gray-700',
+  open: 'bg-blue-100 text-blue-700',
+  received: 'bg-emerald-100 text-emerald-700',
+  cancelled: 'bg-gray-100 text-gray-500 line-through',
 };
 export const StatusBadge = ({ status }) => (
   <span className={`inline-flex items-center px-2 py-1 rounded-sm text-xs font-medium capitalize ${STATUS[status] || 'bg-gray-100 text-gray-700'}`}>

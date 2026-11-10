@@ -11,8 +11,13 @@ import ProductForm from './pages/ProductForm.jsx';
 import Matrices from './pages/Matrices.jsx';
 import MatrixForm from './pages/MatrixForm.jsx';
 import Categories from './pages/Categories.jsx';
+import Brands from './pages/Brands.jsx';
 import Customers from './pages/Customers.jsx';
 import CustomerView from './pages/CustomerView.jsx';
+import VendorView from './pages/VendorView.jsx';
+import PurchaseOrders from './pages/PurchaseOrders.jsx';
+import PurchaseOrderCreate from './pages/PurchaseOrderCreate.jsx';
+import PurchaseOrderView from './pages/PurchaseOrderView.jsx';
 import Vendors from './pages/Vendors.jsx';
 import Receivings from './pages/Receivings.jsx';
 import ReceivingCreate from './pages/ReceivingCreate.jsx';
@@ -111,9 +116,14 @@ export default function App() {
             <Route path="matrix/new" element={g('products', <MatrixForm />, 'create')} />
             <Route path="matrix/edit/:id" element={g('products', <MatrixForm />, 'edit')} />
             <Route path="categories" element={g('categories', <Categories />)} />
+            <Route path="brands" element={g('categories', <Brands />)} />
             <Route path="customers" element={g('customers', <Customers />)} />
             <Route path="customers/:id" element={g('customers', <CustomerView />)} />
             <Route path="vendors" element={g('receiving', <Vendors />)} />
+            <Route path="vendors/:id" element={g('receiving', <VendorView />)} />
+            <Route path="purchase-orders" element={g('receiving', <PurchaseOrders />)} />
+            <Route path="purchase-orders/new" element={g('receiving', <PurchaseOrderCreate />, 'create')} />
+            <Route path="purchase-orders/view/:id" element={g('receiving', <PurchaseOrderView />)} />
             <Route path="receiving" element={g('receiving', <Receivings />)} />
             <Route path="receiving/new" element={g('receiving', <ReceivingCreate />, 'create')} />
             <Route path="receiving/view/:id" element={g('receiving', <ReceivingView />)} />
@@ -126,7 +136,7 @@ export default function App() {
             <Route
               path="import-export"
               element={
-                <Guard check={(can) => can('products') || can('customers')}>
+                <Guard check={(can) => can('import_export') && (can('products') || can('customers'))}>
                   <ImportExport />
                 </Guard>
               }

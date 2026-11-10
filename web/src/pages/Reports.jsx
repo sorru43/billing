@@ -34,7 +34,7 @@ const ICONS = {
 const DESCRIPTIONS = {
   sales: 'Total sale value, paid and owed with today, 7-day, monthly & custom filters. Deleted invoice sales are permanently recorded.',
   inventory: 'Every product with quantity on hand and stock value at cost and selling price.',
-  'low-stock': 'Products that are running low, below a threshold you choose.',
+  'low-stock': "Products at or below each product's own alert level (or one threshold you choose).",
   'out-of-stock': 'Products with no stock left.',
   'price-list': 'Active products with their Selling, Top Customer and Jobber prices.',
 };
@@ -60,7 +60,7 @@ export default function Reports() {
   const [sendingEmail, setSendingEmail] = useState(false);
 
   // Non-sales report params
-  const [otherParams, setOtherParams] = useState({ categoryId: '', threshold: 5 });
+  const [otherParams, setOtherParams] = useState({ categoryId: '', threshold: '' });
 
   useEffect(() => {
     api
@@ -549,13 +549,14 @@ export default function Reports() {
             </Field>
 
             {reportType === 'low-stock' && (
-              <Field label="Low Stock Threshold" htmlFor="r-th">
+              <Field label="Low Stock Threshold (blank = each product's own alert level)" htmlFor="r-th">
                 <input
                   id="r-th"
                   type="number"
                   min="0"
+                  placeholder="Each product's alert level"
                   value={otherParams.threshold}
-                  onChange={(e) => setOtherParams((p) => ({ ...p, threshold: Number(e.target.value) }))}
+                  onChange={(e) => setOtherParams((p) => ({ ...p, threshold: e.target.value === '' ? '' : Number(e.target.value) }))}
                   className={inputCls}
                 />
               </Field>

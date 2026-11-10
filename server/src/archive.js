@@ -38,6 +38,8 @@ export async function archiveAndDelete(id) {
   const { rows } = await query(`SELECT * FROM invoices WHERE id = $1`, [id]);
   const inv = rows[0];
   if (!inv) return { ok: false, error: 'Invoice not found' };
+  // Only fully paid invoices are ever removed; anything with a balance owed is kept.
+  if (inv.status !== 'paid') return { ok: false, error: 'Invoice has a balance owed; kept' };
   const { archiveEmail } = config;
   if (!archiveEmail) {
     const error = 'No archive email is configured on the server (ARCHIVE_EMAIL in server/.env).';
@@ -53,7 +55,7 @@ export async function archiveAndDelete(id) {
   }
   // Ensure the permanent sales ledger marks the active invoice as deleted, but preserves all sales values
   await query(`UPDATE customer_sales_records SET invoice_deleted = true WHERE invoice_id = $1 OR invoice_number = $2`, [id, inv.invoice_number]);
-  await query(`DELETE FROM invoices WHERE id = $1`, [id]);
+  await query(`DELETE FROM invoices WHERE id = $1 AND status = 'paid'`, [id]);
   return { ok: true };
 }
 
@@ -64,7 +66,7 @@ export async function purgeExpiredInvoices() {
   if (running) return;
   running = true;
   try {
-    const { rows } = await query(`SELECT id, invoice_number FROM invoices WHERE expires_at <= now() ORDER BY expires_at LIMIT 50`);
+    const { rows } = await query(`SELECT id, invoice_number FROM invoices WHERE expires_at <= now() AND status = 'paid' ORDER BY expires_at LIMIT 50`);
     for (const { id, invoice_number } of rows) {
       const r = await archiveAndDelete(id);
       console.log(`[purge] ${invoice_number}: ${r.ok ? 'emailed to archive and deleted' : r.error}`);

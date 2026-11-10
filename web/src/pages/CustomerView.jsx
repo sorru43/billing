@@ -91,7 +91,7 @@ export default function CustomerView() {
             onClick={() => setPaying(true)}
             className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-gray-950 text-white px-3 py-1.5 rounded-md shadow cursor-pointer text-sm font-medium transition-colors"
           >
-            <CreditCard size={15} /> Update Balance
+            <CreditCard size={15} /> Receive Payment
           </button>
           {can('invoices', 'create') && (
             <button
@@ -112,7 +112,7 @@ export default function CustomerView() {
           label="Balance Owed"
           value={money(t.balance)}
           tone={t.balance > 0 ? 'text-red-600' : 'text-gray-950'}
-          sub={t.credits > 0 ? `after ${money(t.credits)} return credit` : undefined}
+          sub={[t.credits > 0 && `after ${money(t.credits)} return credit`, t.creditBalance > 0 && `${money(t.creditBalance)} paid in advance`].filter(Boolean).join(' · ') || undefined}
         />
       </div>
 
@@ -147,7 +147,7 @@ export default function CustomerView() {
                 <tr key={p.id} className="border-t border-gray-100">
                   <td className={`${td} font-semibold text-gray-900`}>{p.paymentNumber}</td>
                   <td className={td}>{formatDate(p.paymentDate)}</td>
-                  <td className={`${td} capitalize`}>{p.paymentMethod.replace('_', ' ')}</td>
+                  <td className={`${td} capitalize`}>{p.paymentMethod.replace('_', ' ')}{p.reference ? <span className="block text-xs normal-case text-gray-400">{p.reference}</span> : null}</td>
                   <td className={`${td} text-gray-500`}>{p.notes || '-'}</td>
                   <td className={`${td} text-right font-semibold text-emerald-700`}>{money(p.amount)}</td>
                 </tr>
@@ -264,7 +264,7 @@ export default function CustomerView() {
       />
       <MarkPaidModal
         isOpen={Boolean(payingInvoice)}
-        invoice={payingInvoice}
+        invoice={payingInvoice ? { ...payingInvoice, customerId: c.id, customerName: c.name } : null}
         onClose={() => setPayingInvoice(null)}
         onDone={load}
       />

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
 import { Check, CreditCard, Download, Eye, FileSpreadsheet, Info, SquarePen, Trash2, Upload } from 'lucide-react';
@@ -8,6 +8,7 @@ import {
   Avatar, CancelButton, ConfirmModal, Field, ListToolbar, Modal, PageHeader, Pagination, Row, SubmitButton, Table, TableState, Toggle, inputCls,
 } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
+import { CUSTOMER_METHODS, MethodButtons, paymentSummary } from '../components/PaymentMethods.jsx';
 import { fileToCsv, downloadCustomersTemplate } from '../spreadsheet.js';
 
 export const PRICE_LEVELS = [
@@ -21,19 +22,37 @@ const round2 = (n) => Math.round(n * 100) / 100;
 const btnCls =
   'border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 px-2 py-1 rounded-md shadow-sm cursor-pointer flex items-center gap-2 text-sm';
 
-export function UpdateBalanceModal({ isOpen, onClose, customer, onDone }) {
+export function UpdateBalanceModal({ isOpen, onClose, customer, onDone, invoice }) {
   const money = useMoney();
   const [amount, setAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
-  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [reference, setReference] = useState('');
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toLocaleDateString('en-CA'));
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [fresh, setFresh] = useState(null);
+
+  // Always show the customer's live total owed (the list row may be stale).
+  useEffect(() => {
+    if (!isOpen || !customer?.id) return;
+    setFresh(null);
+    setAmount('');
+    setReference('');
+    setNotes('');
+    setError('');
+    setPaymentMethod('cash');
+    api.get(`/customers/${customer.id}/balance`).then((r) => setFresh(r.data.totals)).catch(() => {});
+  }, [isOpen, customer?.id]);
 
   if (!customer) return null;
-  const balance = customer.totals?.balance || 0;
+  const totals = fresh || customer.totals || {};
+  const balance = round2(totals.balance || 0);
+  const credit = round2(totals.creditBalance || 0);
   const numAmount = Number(amount) || 0;
   const remainingAfter = Math.max(0, round2(balance - numAmount));
+  const extra = Math.max(0, round2(numAmount - balance));
+  const method = CUSTOMER_METHODS.find((m) => m.id === paymentMethod);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -44,52 +63,58 @@ export function UpdateBalanceModal({ isOpen, onClose, customer, onDone }) {
     setSaving(true);
     setError('');
     try {
-      await api.post(`/customers/${customer.id}/payments`, {
+      const { data } = await api.post(`/customers/${customer.id}/payments`, {
         amount: numAmount,
         paymentMethod,
+        reference,
         paymentDate,
         notes,
+        invoiceId: invoice?.id || null,
       });
-      toast.success(`Payment of ${money(numAmount)} recorded successfully!`);
-      setAmount('');
-      setNotes('');
-      onDone();
+      toast.success(`Payment of ${money(numAmount)} recorded. ${paymentSummary(data, money)}`);
+      onDone?.();
       onClose();
     } catch (err) {
-      setError(err.message || 'Failed to update balance');
+      setError(err.message || 'Failed to record payment');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Update Balance · ${customer.name}`}>
+    <Modal isOpen={isOpen} onClose={onClose} title={`Receive Payment · ${customer.name}`}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Customer Balance Summary */}
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3.5 space-y-2">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="font-semibold text-gray-900">{customer.name}</p>
-              {customer.company && <p className="text-xs text-gray-500">{customer.company}</p>}
-            </div>
-            <div className="text-right">
-              <span className="text-xs font-medium text-gray-500 block">Pending Balance</span>
-              <span className={`text-lg font-bold ${balance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                {money(balance)}
-              </span>
-            </div>
+        <div className="grid grid-cols-3 gap-2 bg-gray-50 p-3 rounded-xl border border-gray-200 text-center">
+          <div>
+            <p className="text-[11px] font-semibold uppercase text-gray-500">Invoices Total</p>
+            <p className="text-sm font-bold text-gray-900 mt-0.5">{money(totals.total || 0)}</p>
           </div>
-          <div className="flex justify-between text-xs text-gray-500 pt-2 border-t border-gray-200">
-            <span>Invoices Total: <strong>{money(customer.totals?.total || 0)}</strong></span>
-            <span>Total Paid: <strong className="text-emerald-700">{money(customer.totals?.paid || 0)}</strong></span>
+          <div>
+            <p className="text-[11px] font-semibold uppercase text-emerald-600">Total Paid</p>
+            <p className="text-sm font-bold text-emerald-600 mt-0.5">{money(totals.paid || 0)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold uppercase text-rose-600">Total Owed</p>
+            <p className="text-lg font-bold text-rose-600 leading-tight">{fresh ? money(balance) : '…'}</p>
           </div>
         </div>
+        {credit > 0 && (
+          <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-1.5">
+            {money(credit)} credit on account (already taken off the total owed; used by the next invoice).
+          </p>
+        )}
 
         {error && <p className="text-sm font-medium text-red-600 bg-red-50 p-2.5 rounded border border-red-200">{error}</p>}
 
-        <Field label="Amount Received" required error={error ? '' : undefined}>
+        <div>
+          <label className="block text-xs font-semibold text-gray-700 mb-1.5">Payment Method</label>
+          <MethodButtons methods={CUSTOMER_METHODS} value={paymentMethod} onChange={setPaymentMethod} />
+        </div>
+
+        <Field label="Amount Received" required>
           <div className="space-y-1.5">
             <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">$</span>
               <input
                 type="number"
                 step="0.01"
@@ -99,7 +124,7 @@ export function UpdateBalanceModal({ isOpen, onClose, customer, onDone }) {
                 placeholder="0.00"
                 value={amount}
                 onChange={(e) => { setAmount(e.target.value); setError(''); }}
-                className={`${inputCls} pr-28 text-base font-semibold text-gray-900`}
+                className={`${inputCls} pl-7 pr-36 text-base font-semibold text-gray-900`}
               />
               {balance > 0 && (
                 <button
@@ -107,20 +132,16 @@ export function UpdateBalanceModal({ isOpen, onClose, customer, onDone }) {
                   onClick={() => { setAmount(String(balance)); setError(''); }}
                   className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded cursor-pointer transition-colors"
                 >
-                  Pay Full ({money(balance)})
+                  Pay All Owed ({money(balance)})
                 </button>
               )}
             </div>
-            {numAmount > 0 && balance > 0 && (
+            {numAmount > 0 && (
               <p className="text-xs text-gray-600">
-                New pending balance after payment:{' '}
-                <strong className={remainingAfter > 0 ? 'text-red-600' : 'text-emerald-600'}>
-                  {money(remainingAfter)}
-                </strong>
-                {numAmount > balance && (
-                  <span className="text-purple-600 ml-1">
-                    (excess: {money(round2(numAmount - balance))})
-                  </span>
+                Total owed after payment:{' '}
+                <strong className={remainingAfter > 0 ? 'text-red-600' : 'text-emerald-600'}>{money(remainingAfter)}</strong>
+                {extra > 0 && (
+                  <span className="text-purple-700 font-semibold ml-1">· {money(extra)} extra kept as credit for the next invoice</span>
                 )}
               </p>
             )}
@@ -128,45 +149,25 @@ export function UpdateBalanceModal({ isOpen, onClose, customer, onDone }) {
         </Field>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Payment Method">
-            <select
-              value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
-              className={`${inputCls} bg-white h-[42px]`}
-            >
-              <option value="cash">Cash</option>
-              <option value="card">Credit / Debit Card</option>
-              <option value="bank_transfer">Bank Transfer</option>
-              <option value="cheque">Cheque</option>
-              <option value="other">Other</option>
-            </select>
-          </Field>
+          {method?.ref ? (
+            <Field label={method.ref}>
+              <input type="text" maxLength={200} placeholder={method.ph} value={reference} onChange={(e) => setReference(e.target.value)} className={inputCls} />
+            </Field>
+          ) : <div className="hidden sm:block" />}
           <Field label="Payment Date">
-            <input
-              type="date"
-              required
-              value={paymentDate}
-              onChange={(e) => setPaymentDate(e.target.value)}
-              className={inputCls}
-            />
+            <input type="date" required value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} className={inputCls} />
           </Field>
         </div>
 
-        <Field label="Notes / Reference">
-          <input
-            type="text"
-            maxLength={500}
-            placeholder="Receipt #, cheque number, or notes (optional)"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            className={inputCls}
-          />
+        <Field label="Notes (optional)">
+          <input type="text" maxLength={500} placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
         </Field>
 
         <div className="bg-blue-50 border border-blue-200 rounded-md p-2.5 text-xs text-blue-800 flex items-start gap-2">
           <Info size={15} className="text-blue-600 shrink-0 mt-0.5" />
           <span>
-            Payment will automatically be applied to clear older unpaid bills first (FIFO) and deduct from the customer's pending amount.
+            {invoice ? `Pays ${invoice.invoiceNumber} first, then` : 'Pays'} the oldest unpaid invoices first. Anything paid over the total
+            owed is kept as credit and taken off the customer's next invoice automatically.
           </span>
         </div>
 
@@ -177,7 +178,7 @@ export function UpdateBalanceModal({ isOpen, onClose, customer, onDone }) {
             disabled={saving}
             className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-gray-950 rounded-md shadow-sm cursor-pointer disabled:opacity-70 transition-colors flex items-center gap-1.5"
           >
-            {saving ? 'Processing...' : 'Deduct from Balance'}
+            {saving ? 'Processing...' : `Record Payment${numAmount > 0 ? ` (${money(numAmount)})` : ''}`}
           </button>
         </div>
       </form>
@@ -417,10 +418,12 @@ export default function Customers() {
   return (
     <div className="space-y-4">
       <PageHeader title="Customers" actionLabel={can('customers', 'create') && 'New Customer'} onAction={() => (setErrors({}), setEditing({ ...EMPTY }))}>
-        <a href="/api/customers/export" className={btnCls}>
+        {can('import_export') && (
+          <a href="/api/customers/export" className={btnCls}>
           <FileSpreadsheet size={14} /> Export
         </a>
-        {can('customers', 'create') && (
+        )}
+        {can('customers', 'create') && can('import_export', 'create') && (
           <button type="button" onClick={() => setImporting(true)} className={btnCls}>
             <Upload size={14} /> Import
           </button>

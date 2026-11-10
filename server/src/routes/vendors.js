@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { query } from '../db.js';
+import { query, tx } from '../db.js';
+import { payVendor } from '../balance.js';
 import { requirePerm, can } from '../auth.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 
@@ -20,12 +21,17 @@ const schema = z.object({
 const TOTALS = `
   (SELECT coalesce(sum(total), 0) FROM receivings x WHERE x.vendor_id = v.id) AS bought,
   (SELECT coalesce(sum(paid_amount), 0) FROM receivings x WHERE x.vendor_id = v.id) AS paid,
-  (SELECT coalesce(sum(GREATEST(0, total - paid_amount)), 0) FROM receivings x WHERE x.vendor_id = v.id AND x.status != 'paid') AS owed`;
+  (SELECT coalesce(sum(GREATEST(0, total - paid_amount)), 0) FROM receivings x WHERE x.vendor_id = v.id AND x.status != 'paid') AS owed,
+  v.credit_balance AS credit_balance`;
 
 const out = (v) => ({
   id: v.id, name: v.name, company: v.company, email: v.email, phone: v.phone, address: v.address,
   notes: v.notes, status: v.status, createdAt: v.created_at,
-  ...(v.bought !== undefined ? { totals: { bought: Number(v.bought || 0), paid: Number(v.paid || 0), owed: Number(v.owed || 0) } } : {}),
+  ...(v.bought !== undefined ? { totals: {
+    bought: Number(v.bought || 0), paid: Number(v.paid || 0),
+    owed: Math.max(0, Math.round((Number(v.owed || 0) - Number(v.credit_balance || 0)) * 100) / 100),
+    creditBalance: Number(v.credit_balance || 0),
+  } } : {}),
 });
 
 r.get('/', requirePerm('receiving', 'view'), h(async (req, res) => {
@@ -43,7 +49,7 @@ r.get('/options', h(async (req, res) => {
   const search = String(req.query.search || '').trim().slice(0, 100);
   const params = search ? [likeEscape(search)] : [];
   const { rows } = await query(
-    `SELECT * FROM vendors WHERE status = true ${search ? 'AND (name ILIKE $1 OR company ILIKE $1 OR phone ILIKE $1)' : ''} ORDER BY name LIMIT 20`,
+    `SELECT * FROM vendors WHERE status = true ${search ? 'AND (name ILIKE $1 OR company ILIKE $1 OR phone ILIKE $1)' : ''} ORDER BY name LIMIT ${req.query.all === '1' ? 1000 : 20}`,
     params,
   );
   ok(res, rows.map(out));
@@ -86,92 +92,29 @@ r.delete('/:id', requirePerm('receiving', 'delete'), h(async (req, res) => {
   ok(res, null, 'Vendor deleted');
 }));
 
-// Record payment (full or portion: check, cash, wire, etc.) to vendor
-// Automatically applies FIFO across unpaid and partial receivings
+// Pay a vendor: applied to the chosen receiving first (if any), then the oldest open
+// receivings; anything left over is kept as credit for the next receiving.
+const payDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : new Date().toISOString().slice(0, 10));
 r.post('/:id/payments', requirePerm('receiving', 'edit'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Vendor not found');
-  const amount = Number(req.body?.amount);
-  if (!amount || amount <= 0) return fail(res, 422, 'Enter a valid payment amount greater than 0');
-
-  const { rows: vRows } = await query(`SELECT * FROM vendors WHERE id=$1`, [req.params.id]);
-  if (!vRows.length) return fail(res, 404, 'Vendor not found');
-  const vendor = vRows[0];
-
-  const paymentMethod = req.body?.paymentMethod || 'cash';
-  const reference = String(req.body?.reference || '').trim();
-  const notes = String(req.body?.notes || '').trim();
-  const paymentDate = req.body?.paymentDate || new Date().toISOString().slice(0, 10);
-
-  // FIFO settlement across unpaid and partial receivings
-  const { rows: rRows } = await query(
-    `SELECT * FROM receivings
-     WHERE vendor_id = $1 AND status IN ('unpaid', 'partial')
-     ORDER BY received_date ASC, created_at ASC`,
-    [vendor.id],
-  );
-
-  let unallocated = amount;
-  const clearedReceivings = [];
-
-  for (const rcv of rRows) {
-    if (unallocated <= 0) break;
-    const total = Number(rcv.total);
-    const currentPaid = Number(rcv.paid_amount || 0);
-    const remainingDue = Math.max(0, total - currentPaid);
-    if (remainingDue <= 0) continue;
-
-    const alloc = Math.min(unallocated, remainingDue);
-    const newPaid = Math.round((currentPaid + alloc) * 100) / 100;
-    const newStatus = newPaid >= total ? 'paid' : (newPaid > 0 ? 'partial' : 'unpaid');
-
-    await query(
-      `UPDATE receivings SET paid_amount = $1, status = $2 WHERE id = $3`,
-      [newPaid, newStatus, rcv.id],
-    );
-
-    clearedReceivings.push({
-      id: rcv.id,
-      receiving_number: rcv.receiving_number,
-      allocated: alloc,
-      new_paid: newPaid,
-      status: newStatus,
-    });
-
-    unallocated = Math.round((unallocated - alloc) * 100) / 100;
-  }
-
-  // Create payment record in vendor_payments
-  const pSeq = (await query(`SELECT nextval('vendor_payment_seq') AS n`)).rows[0].n;
-  const paymentNumber = `VPAY_${String(pSeq).padStart(6, '0')}`;
-
-  const { rows: pRows } = await query(
-    `INSERT INTO vendor_payments (
-      payment_number, vendor_id, vendor_name, amount, payment_date,
-      payment_method, reference, notes, created_by
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    RETURNING *`,
-    [
-      paymentNumber,
-      vendor.id,
-      vendor.name,
-      amount,
-      paymentDate,
-      paymentMethod,
-      reference,
-      notes,
-      req.user?.id || null,
-    ],
-  );
-
-  ok(
-    res,
-    {
-      payment: pRows[0],
-      clearedReceivings,
-      unallocatedAmount: unallocated,
-    },
-    'Vendor balance updated successfully',
-  );
+  const amount = Math.round(Number(req.body?.amount) * 100) / 100;
+  if (!(amount > 0) || amount > 1e11) return fail(res, 422, 'Enter a valid payment amount greater than 0');
+  const result = await tx((client) => payVendor(client, {
+    vendorId: req.params.id, amount,
+    method: String(req.body?.paymentMethod || 'cash').slice(0, 30),
+    date: payDate(req.body?.paymentDate),
+    reference: String(req.body?.reference || '').trim().slice(0, 200),
+    notes: String(req.body?.notes || '').trim().slice(0, 2000),
+    userId: req.user?.id,
+    receivingId: isUuid(req.body?.receivingId) ? req.body.receivingId : null,
+  }));
+  if (result.error) return fail(res, result.status || 400, result.error);
+  ok(res, {
+    payment: result.payment,
+    clearedReceivings: result.applied.map((a) => ({ receivingNumber: a.number, applied: a.applied, status: a.status })),
+    creditAdded: result.creditAdded,
+    creditBalance: result.creditBalance,
+  }, 'Vendor payment recorded');
 }));
 
 // Vendor statement: returns vendor summary, receivings, and payment history

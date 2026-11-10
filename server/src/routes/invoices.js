@@ -7,6 +7,7 @@ import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '.
 import { getSetting } from '../settings.js';
 import { invoicePdf } from '../pdf.js';
 import { invoiceEmail } from '../archive.js';
+import { receiveCustomerPayment, useCustomerCredit } from '../balance.js';
 
 const r = Router();
 const PRICE_FIELD = { selling: 'selling_price', top_customer: 'top_customer_price', jobber: 'jobber_price' };
@@ -133,6 +134,8 @@ r.get('/:id/pdf', requirePerm('invoices', 'view'), h(async (req, res) => {
 r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
   const b = validate(schema, req.body, res);
   if (!b) return;
+  // Admin setting: allow selling more than is in stock (stock then goes below zero until received).
+  const allowOversell = (await getSetting('inventory')).allowOutOfStockSales === true;
   const result = await tx(async (client) => {
     const ids = [...new Set(b.items.map((i) => i.productId))];
     // Lock the product rows so two invoices cannot oversell the same stock.
@@ -146,7 +149,7 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
     b.items.forEach((it, idx) => {
       const p = byId.get(it.productId);
       if (!p || !p.status || p.matrix_status === false) errors[`items.${idx}.productId`] = 'Product not found or inactive';
-      else if (needed.get(p.id) > p.quantity) errors[`items.${idx}.quantity`] = `Only ${p.quantity} of "${p.name}" in stock`;
+      else if (!allowOversell && needed.get(p.id) > p.quantity) errors[`items.${idx}.quantity`] = `Only ${p.quantity} of "${p.name}" in stock`;
     });
     if (Object.keys(errors).length) return { errors };
 
@@ -180,76 +183,84 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
       const m = (await client.query(`SELECT id FROM customers WHERE lower(trim(name))=lower(trim($1)) LIMIT 2`, [b.customerName])).rows;
       if (m.length === 1) customerId = m[0].id;
     }
-    let finalPaid = 0;
-    let finalStatus = b.status || 'unpaid';
     const payEntries = [];
-
-    if (b.payment && !b.payment.isNotPaid) {
+    const notPaid = Boolean(b.payment?.isNotPaid);
+    if (b.payment && !notPaid) {
       const {
-        cash = 0,
-        cheque = 0, chequeNumber = '',
-        check = 0, checkNumber = '',
-        bank = 0, bankReference = '',
-        zelle = 0,
-        card = 0, cardReference = '',
-        other = 0, otherNote = '',
+        cash = 0, cheque = 0, chequeNumber = '', check = 0, checkNumber = '', bank = 0, bankReference = '',
+        zelle = 0, card = 0, cardReference = '', other = 0, otherNote = '',
       } = b.payment;
       const chqAmt = cheque || check;
       const chqNum = chequeNumber || checkNumber;
+      if (cash > 0) payEntries.push({ method: 'cash', amount: round2(cash), reference: '', notes: 'Cash' });
+      if (chqAmt > 0) payEntries.push({ method: 'check', amount: round2(chqAmt), reference: chqNum, notes: chqNum ? `Check #${chqNum}` : 'Check' });
+      // the invoice screen fills bank and zelle with the same value: count it once
       const bankAmt = bank || zelle;
-      if (cash > 0) payEntries.push({ method: 'cash', amount: round2(cash), notes: 'Cash' });
-      if (chqAmt > 0) payEntries.push({ method: 'cheque', amount: round2(chqAmt), notes: chqNum ? `Cheque #${chqNum}` : 'Cheque' });
-      if (bankAmt > 0) payEntries.push({ method: 'bank', amount: round2(bankAmt), notes: bankReference ? `Bank Ref: ${bankReference}` : 'Bank transfer' });
-      if (card > 0) payEntries.push({ method: 'card', amount: round2(card), notes: cardReference ? `Card Ref: ${cardReference}` : 'Credit/Debit Card' });
-      if (other > 0) payEntries.push({ method: 'other', amount: round2(other), notes: otherNote ? `Other: ${otherNote}` : 'Other payment' });
-      const totalEntered = round2(payEntries.reduce((s, p) => s + p.amount, 0));
-      finalPaid = Math.min(total, totalEntered);
-    } else if (b.paidAmount > 0) {
-      finalPaid = Math.min(total, round2(b.paidAmount));
+      if (bankAmt > 0) payEntries.push({ method: 'bank_transfer', amount: round2(bankAmt), reference: bankReference, notes: bankReference ? `Bank/Zelle Ref: ${bankReference}` : 'Bank / Zelle' });
+      if (card > 0) payEntries.push({ method: 'card', amount: round2(card), reference: cardReference, notes: cardReference ? `Card Ref: ${cardReference}` : 'Credit/Debit Card' });
+      if (other > 0) payEntries.push({ method: 'other', amount: round2(other), reference: otherNote, notes: otherNote ? `Other: ${otherNote}` : 'Other payment' });
+    } else if (!notPaid && b.paidAmount > 0) {
+      payEntries.push({ method: 'cash', amount: round2(b.paidAmount), reference: '', notes: 'Cash' });
     }
+    const markedPaid = !notPaid && !payEntries.length && b.status === 'paid' && total > 0;
 
-    if (b.payment?.isNotPaid) {
-      finalStatus = 'unpaid';
-      finalPaid = 0;
-    } else if (finalPaid >= total && total > 0) {
-      finalStatus = 'paid';
-    } else if (finalPaid > 0) {
-      finalStatus = 'partial';
-    } else if (b.status === 'paid' && total > 0) {
-      finalPaid = total;
-      finalStatus = 'paid';
-    } else {
-      finalStatus = 'unpaid';
-      finalPaid = 0;
+    // With no saved customer there is nowhere to keep extra money, so payment is capped at the invoice total.
+    let initialPaid = 0;
+    if (!customerId && !notPaid) {
+      const entered = round2(payEntries.reduce((t, x) => t + x.amount, 0));
+      initialPaid = markedPaid ? total : Math.min(total, entered);
     }
+    const initialStatus = initialPaid >= total && total > 0 ? 'paid' : initialPaid > 0 ? 'partial' : 'unpaid';
 
     const number = await nextNumber(client, false);
-    const { rows } = await client.query(
+    let { rows } = await client.query(
       `INSERT INTO invoices (invoice_number, invoice_date, due_date, customer_name, customer_email, customer_phone, customer_address,
                              price_level, items, subtotal, discount_total, tax_total, total, paid_amount, notes, status, created_by, expires_at, customer_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now() + make_interval(hours => $18), $19) RETURNING *`,
       [number, b.invoiceDate, b.dueDate, b.customerName, b.customerEmail, b.customerPhone, b.customerAddress, b.priceLevel,
-       JSON.stringify(items), round2(subtotal), round2(discountTotal), round2(taxTotal), total, finalPaid, b.notes, finalStatus, req.user.id,
+       JSON.stringify(items), round2(subtotal), round2(discountTotal), round2(taxTotal), total, initialPaid, b.notes, initialStatus, req.user.id,
        config.invoiceRetentionHours, customerId],
     );
+    const invoiceId = rows[0].id;
 
-    // Record payments in customer_payments
-    for (const p of payEntries) {
-      const pSeq = (await client.query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
-      const paymentNumber = `PAY_${String(pSeq).padStart(6, '0')}`;
-      await client.query(
-        `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, notes, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [paymentNumber, customerId, b.customerName, p.amount, b.invoiceDate, p.method, `Invoice ${number}: ${p.notes}`, req.user.id],
-      );
-    }
-
-    // Keep sales records in sync
+    // Keep sales records in sync (settlement below updates this row too)
     await client.query(
       `INSERT INTO customer_sales_records (invoice_id, invoice_number, customer_id, customer_name, invoice_date, total, paid_amount, status, items)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [rows[0].id, number, customerId, b.customerName, b.invoiceDate, total, finalPaid, finalStatus, JSON.stringify(items)],
+      [invoiceId, number, customerId, b.customerName, b.invoiceDate, total, initialPaid, initialStatus, JSON.stringify(items)],
     );
+
+    if (customerId) {
+      // Credit from an earlier overpayment pays this invoice first.
+      await useCustomerCredit(client, customerId, invoiceId);
+      if (markedPaid) {
+        const due = round2(total - Number((await client.query(`SELECT paid_amount FROM invoices WHERE id=$1`, [invoiceId])).rows[0].paid_amount));
+        if (due > 0) payEntries.push({ method: 'other', amount: due, reference: '', notes: 'Marked paid' });
+      }
+      // Extra money is carried to older bills / credit only when the cashier picked the saved
+      // customer (the payment screen says so). For an auto-matched customer it is change, so cap it.
+      if (b.customerId !== customerId) {
+        let due = round2(total - Number((await client.query(`SELECT paid_amount FROM invoices WHERE id=$1`, [invoiceId])).rows[0].paid_amount));
+        for (const p of payEntries) { p.amount = Math.min(p.amount, Math.max(0, due)); due = round2(due - p.amount); }
+      }
+      // Each payment goes to this invoice first; any extra clears older bills, then becomes credit.
+      for (const p of payEntries.filter((x) => x.amount > 0)) {
+        await receiveCustomerPayment(client, {
+          customerId, amount: p.amount, method: p.method, date: b.invoiceDate, reference: p.reference,
+          notes: `Invoice ${number}: ${p.notes}`, userId: req.user.id, invoiceId,
+        });
+      }
+      rows = (await client.query(`SELECT * FROM invoices WHERE id=$1`, [invoiceId])).rows;
+    } else {
+      for (const p of payEntries) {
+        const pSeq = (await client.query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
+        await client.query(
+          `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, reference, notes, created_by)
+           VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)`,
+          [`PAY_${String(pSeq).padStart(6, '0')}`, b.customerName, p.amount, b.invoiceDate, p.method, p.reference, `Invoice ${number}: ${p.notes}`, req.user.id],
+        );
+      }
+    }
 
     return { invoice: rows[0] };
   });
@@ -280,27 +291,42 @@ r.patch('/:id/status', requirePerm('invoices', 'edit'), h(async (req, res) => {
   const total = Number(inv.total);
   const currentPaid = Number(inv.paid_amount) || 0;
   const due = round2(total - currentPaid);
-  const payAmount = req.body?.amount != null ? Math.min(due > 0 ? due : total, round2(Number(req.body.amount))) : (due > 0 ? due : total);
-  const newPaid = round2(currentPaid + payAmount);
-  const newStatus = newPaid >= total ? 'paid' : (newPaid > 0 ? 'partial' : 'unpaid');
+  const requested = req.body?.amount != null ? round2(Number(req.body.amount)) : due;
+  if (!(requested > 0)) return fail(res, 422, due > 0 ? 'Enter a payment amount greater than 0' : 'This invoice is already paid');
+  const method = String(req.body?.paymentMethod || 'cash').slice(0, 30);
+  const reference = String(req.body?.reference || '').trim().slice(0, 200);
+  const note = String(req.body?.notes || '').trim().slice(0, 2000);
+  const pDate = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.paymentDate || '') ? req.body.paymentDate : new Date().toISOString().slice(0, 10);
 
-  await query(`UPDATE invoices SET status=$1, paid_amount=$2 WHERE id=$3`, [newStatus, newPaid, inv.id]);
-  await query(`UPDATE customer_sales_records SET status=$1, paid_amount=$2 WHERE invoice_id=$3`, [newStatus, newPaid, inv.id]);
-
-  if (payAmount > 0) {
-    const method = req.body?.paymentMethod || 'cash';
-    const ref = req.body?.reference ? ` (${req.body.reference})` : '';
-    const note = req.body?.notes ? ` - ${req.body.notes}` : '';
-    const pSeq = (await query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
-    const paymentNumber = `PAY_${String(pSeq).padStart(6, '0')}`;
-    const pDate = req.body?.paymentDate || new Date().toISOString().slice(0, 10);
-    await query(
-      `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [paymentNumber, inv.customer_id, inv.customer_name, payAmount, pDate, method, `Invoice ${inv.invoice_number}${ref}${note}`, req.user?.id || null],
-    );
+  if (inv.customer_id) {
+    // Saved customer: this invoice first, then older bills, then credit. Nothing is dropped.
+    const result = await tx((client) => receiveCustomerPayment(client, {
+      customerId: inv.customer_id, amount: requested, method, date: pDate, reference,
+      notes: `Invoice ${inv.invoice_number}${reference ? ` (${reference})` : ''}${note ? ` - ${note}` : ''}`,
+      userId: req.user?.id, invoiceId: inv.id,
+    }));
+    if (result.error) return fail(res, result.status || 400, result.error);
+    return ok(res, {
+      clearedInvoices: result.applied.map((a) => ({ invoiceNumber: a.number, applied: a.applied, status: a.status })),
+      creditAdded: result.creditAdded,
+      creditBalance: result.creditBalance,
+    }, 'Payment recorded');
   }
 
+  // No saved customer: there is nowhere to carry extra money, so cap at what this invoice owes.
+  if (due <= 0) return fail(res, 422, 'This invoice is already paid');
+  const payAmount = Math.min(due, requested);
+  const newPaid = round2(currentPaid + payAmount);
+  const newStatus = newPaid >= total ? 'paid' : 'partial';
+  await query(`UPDATE invoices SET status=$1, paid_amount=$2 WHERE id=$3`, [newStatus, newPaid, inv.id]);
+  await query(`UPDATE customer_sales_records SET status=$1, paid_amount=$2 WHERE invoice_id=$3`, [newStatus, newPaid, inv.id]);
+  const pSeq = (await query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
+  await query(
+    `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, reference, notes, created_by)
+     VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)`,
+    [`PAY_${String(pSeq).padStart(6, '0')}`, inv.customer_name, payAmount, pDate, method, reference,
+     `Invoice ${inv.invoice_number}${reference ? ` (${reference})` : ''}${note ? ` - ${note}` : ''}`, req.user?.id || null],
+  );
   ok(res, null, 'Invoice status updated');
 }));
 

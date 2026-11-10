@@ -8,7 +8,7 @@ import { CancelButton, ConfirmModal, Field, Loader, SubmitButton, Toggle, inputC
 
 const PRICE_KEYS = ['cost', 'selling_price', 'top_customer_price', 'jobber_price'];
 const EMPTY = {
-  name: '', category_id: '', description: '', status: true,
+  name: '', category_id: '', brand_id: '', low_stock_alert: '', description: '', status: true,
   attr1_name: 'Flavor', attr1_values: [], attr2_name: '', attr2_values: [],
   cost: '', selling_price: '', top_customer_price: '', jobber_price: '',
 };
@@ -80,6 +80,7 @@ export default function MatrixForm() {
   // Variant details keyed by option combination; combinations not in the grid are ignored.
   const [variants, setVariants] = useState({});
   const [categories, setCategories] = useState([]);
+  const [brands, setBrands] = useState([]);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
@@ -87,12 +88,13 @@ export default function MatrixForm() {
 
   useEffect(() => {
     api.get('/categories/options').then((r) => setCategories(r.data)).catch(() => {});
+    api.get('/brands/options').then((r) => setBrands(r.data)).catch(() => {});
     if (!id) return;
     api
       .get(`/matrices/${id}`)
       .then(({ data }) => {
-        setForm({ ...EMPTY, ...Object.fromEntries(Object.keys(EMPTY).map((k) => [k, data[k] ?? EMPTY[k]])), category_id: data.category_id || '' });
-        setVariants(Object.fromEntries(data.variants.map((v) => [keyOf(v.option1, v.option2), { ...v, include: true }])));
+        setForm({ ...EMPTY, ...Object.fromEntries(Object.keys(EMPTY).map((k) => [k, data[k] ?? EMPTY[k]])), category_id: data.category_id || '', brand_id: data.brand_id || '' });
+        setVariants(Object.fromEntries(data.variants.map((v) => [keyOf(v.option1, v.option2), { ...v, low_stock_alert: v.low_stock_alert ?? '', include: true }])));
       })
       .catch((e) => toast.error(e.message))
       .finally(() => setLoading(false));
@@ -102,7 +104,7 @@ export default function MatrixForm() {
   const two = Boolean(form.attr2_name.trim());
 
   const defaults = () => ({
-    barcode: '', quantity: 0, status: true, include: true,
+    barcode: '', quantity: 0, status: true, include: true, low_stock_alert: form.low_stock_alert,
     ...Object.fromEntries(PRICE_KEYS.map((k) => [k, form[k] === '' ? 0 : form[k]])),
   });
 
@@ -118,10 +120,11 @@ export default function MatrixForm() {
   const applyPrices = () => {
     setVariants((vs) => {
       const next = { ...vs };
-      for (const c of combos) next[c.key] = { ...rowOf(c), ...Object.fromEntries(PRICE_KEYS.map((k) => [k, form[k] === '' ? 0 : form[k]])) };
+      for (const c of combos)
+        next[c.key] = { ...rowOf(c), ...Object.fromEntries(PRICE_KEYS.map((k) => [k, form[k] === '' ? 0 : form[k]])), low_stock_alert: form.low_stock_alert };
       return next;
     });
-    toast.success('Default prices applied to every variant');
+    toast.success('Default prices and alert level applied to every variant');
   };
   const fillBarcodes = () =>
     setVariants((vs) => {
@@ -184,11 +187,12 @@ export default function MatrixForm() {
       <input id={k} type="number" min="0" step="0.01" required value={form[k]} onChange={set(k)} className={inputCls} />
     </Field>
   );
-  const num = (v, k, step) => (
+  const num = (v, k, step, placeholder, allowNegative) => (
     <input
       type="number"
-      min="0"
+      min={allowNegative ? undefined : '0'}
       step={step}
+      placeholder={placeholder}
       value={v[k]}
       disabled={!v.include}
       onChange={(e) => setVariant(keyOf(v.option1, v.option2), { [k]: e.target.value })}
@@ -214,6 +218,16 @@ export default function MatrixForm() {
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Brand" htmlFor="brand_id" error={errors.brand_id}>
+            <select id="brand_id" value={form.brand_id} onChange={set('brand_id')} className={`${inputCls} bg-white h-[42px]`}>
+              <option value="">No brand</option>
+              {brands.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
                 </option>
               ))}
             </select>
@@ -263,12 +277,15 @@ export default function MatrixForm() {
               Apply to all variants
             </button>
           </div>
-          <p className="text-xs text-gray-500">New variants start with these prices. You can still change any variant below.</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <p className="text-xs text-gray-500">New variants start with these prices and alert level. You can still change any variant below.</p>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {money('cost', 'Cost')}
             {money('selling_price', 'Selling Price')}
             {money('top_customer_price', 'Top Customer Price')}
             {money('jobber_price', 'Jobber Price')}
+            <Field label="Low Stock Alert at" htmlFor="low_stock_alert" error={errors.low_stock_alert}>
+              <input id="low_stock_alert" type="number" min="0" step="1" placeholder="5" value={form.low_stock_alert} onChange={set('low_stock_alert')} className={inputCls} />
+            </Field>
           </div>
         </div>
 
@@ -288,7 +305,7 @@ export default function MatrixForm() {
             <p className="text-sm text-gray-500">Add values above and every combination appears here. Untick any combination you don’t carry.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[980px]">
+              <table className="w-full text-sm min-w-[1060px]">
                 <thead>
                   <tr className="bg-black text-white text-left">
                     <th className="px-2 py-2 rounded-l-md w-10" title="Carry this variant">✓</th>
@@ -300,6 +317,7 @@ export default function MatrixForm() {
                     <th className="px-2 py-2 w-24">Selling</th>
                     <th className="px-2 py-2 w-24">Top Cust.</th>
                     <th className="px-2 py-2 w-24">Jobber</th>
+                    <th className="px-2 py-2 w-20" title="Low stock alert: warn when stock drops to this many (blank = 5)">Alert at</th>
                     <th className="px-2 py-2 w-16 rounded-r-md">Active</th>
                   </tr>
                 </thead>
@@ -339,11 +357,12 @@ export default function MatrixForm() {
                             </button>
                           </div>
                         </td>
-                        <td className="px-2 py-1.5">{num(v, 'quantity', '1')}</td>
+                        <td className="px-2 py-1.5">{num(v, 'quantity', '1', '', true)}</td>
                         <td className="px-2 py-1.5">{num(v, 'cost', '0.01')}</td>
                         <td className="px-2 py-1.5">{num(v, 'selling_price', '0.01')}</td>
                         <td className="px-2 py-1.5">{num(v, 'top_customer_price', '0.01')}</td>
                         <td className="px-2 py-1.5">{num(v, 'jobber_price', '0.01')}</td>
+                        <td className="px-2 py-1.5">{num(v, 'low_stock_alert', '1', '5')}</td>
                         <td className="px-2 py-1.5">
                           <Toggle name={`vs-${c.key}`} checked={v.status} disabled={!v.include} onChange={(s) => setVariant(c.key, { status: s })} />
                         </td>

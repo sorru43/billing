@@ -163,6 +163,63 @@ export async function invoicePdf(inv, company) {
   return toBuffer(doc);
 }
 
+// Purchase order sent to a vendor: our company as the buyer, priced at cost.
+export async function purchaseOrderPdf(po, vendor, company) {
+  const sym = '$';
+  const doc = newDoc();
+  const L = doc.page.margins.left;
+  const W = doc.page.width - L - doc.page.margins.right;
+
+  await drawLogo(doc, L, 36, 44);
+  doc.font('bold').fontSize(20).fillColor('#111111').text('PURCHASE ORDER', L, 40, { width: W, align: 'right' });
+  doc.font('body').fontSize(10).fillColor(GRAY)
+    .text(`PO No: ${po.po_number}`, L, 70, { width: W, align: 'right' })
+    .text(`Order Date: ${fmtDate(po.order_date)}`, { width: W, align: 'right' });
+
+  const boxY = 130;
+  doc.font('bold').fontSize(11).fillColor(RED).text('Ordered By', L, boxY);
+  doc.font('body').fontSize(10).fillColor('#111111')
+    .text(company.companyName || '', L, boxY + 16, { width: W / 2 - 10 })
+    .fillColor(GRAY)
+    .text([company.address, company.email, company.phone].filter(Boolean).join('\n'), { width: W / 2 - 10 });
+  doc.font('bold').fontSize(11).fillColor(RED).text('Vendor', L + W / 2, boxY);
+  doc.font('body').fontSize(10).fillColor('#111111')
+    .text(po.vendor_name, L + W / 2, boxY + 16, { width: W / 2 })
+    .fillColor(GRAY)
+    .text([vendor.company, vendor.address, vendor.email, vendor.phone].filter(Boolean).join('\n'), { width: W / 2 });
+
+  let y = Math.max(doc.y, boxY + 80) + 16;
+  y = table(doc, {
+    startY: y,
+    columns: [
+      { key: 'n', label: '#', width: 5 },
+      { key: 'name', label: 'Item', width: 40 },
+      { key: 'barcode', label: 'Barcode', width: 18 },
+      { key: 'quantity', label: 'Qty', width: 9, align: 'right' },
+      { key: 'cost', label: 'Cost', width: 13, align: 'right' },
+      { key: 'amount', label: 'Total', width: 15, align: 'right' },
+    ],
+    rows: po.items.map((it, i) => ({
+      n: i + 1, name: it.name, barcode: it.barcode || '', quantity: it.quantity, cost: money(sym, it.cost), amount: money(sym, it.amount),
+    })),
+  });
+  if (y > doc.page.height - 160) {
+    doc.addPage();
+    y = doc.page.margins.top;
+  }
+  const sx = L + W - 230;
+  y += 14;
+  doc.moveTo(sx, y).lineTo(sx + 230, y).lineWidth(1.5).strokeColor('#111111').stroke();
+  y += 8;
+  doc.font('bold').fontSize(12).fillColor('#111111').text('Order Total', sx, y, { width: 110 });
+  doc.text(money(sym, po.total), sx + 110, y, { width: 120, align: 'right' });
+  if (po.notes) {
+    doc.font('bold').fontSize(11).fillColor('#111111').text('Notes', L, y + 36);
+    doc.font('body').fontSize(10).fillColor(GRAY).text(po.notes, L, doc.y + 4, { width: W });
+  }
+  return toBuffer(doc);
+}
+
 export async function reportPdf({ title, subtitle, summary, columns, rows, company }) {
   const doc = newDoc('landscape');
   const L = doc.page.margins.left;

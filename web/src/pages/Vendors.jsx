@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
-import { DollarSign, PackagePlus, ReceiptText, SquarePen, Trash2 } from 'lucide-react';
+import { ClipboardList, DollarSign, Eye, PackagePlus, ReceiptText, SquarePen, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
 import {
@@ -25,13 +25,15 @@ export default function Vendors() {
   const [deleting, setDeleting] = useState(false);
 
   const actions = [
-    { label: 'Pay Vendor', icon: <DollarSign size={14} />, onClick: (v) => setPayingVendor(v) },
+    { label: 'View / Statement', icon: <Eye size={14} />, onClick: (v) => navigate(`/admin/vendors/${v.id}`) },
+    can('receiving', 'edit') && { label: 'Pay Vendor', icon: <DollarSign size={14} />, onClick: (v) => setPayingVendor(v) },
     { label: 'Receivings', icon: <ReceiptText size={14} />, onClick: (v) => navigate(`/admin/receiving?vendorId=${v.id}`) },
+    can('receiving', 'create') && { label: 'New Purchase Order', icon: <ClipboardList size={14} />, onClick: (v) => navigate(`/admin/purchase-orders/new?vendorId=${v.id}`) },
     can('receiving', 'create') && { label: 'Receive Stock', icon: <PackagePlus size={14} />, onClick: (v) => navigate(`/admin/receiving/new?vendorId=${v.id}`) },
     can('receiving', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (v) => (setErrors({}), setEditing({ ...EMPTY, ...v })) },
     can('receiving', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
   ].filter(Boolean);
-  const headers = ['#', 'Vendor', 'Contact', 'Total Received', 'Total Paid', 'Owed to Vendor', 'Update Balance', 'Status', 'Actions'];
+  const headers = ['#', 'Vendor', 'Contact', 'Total Received', 'Total Paid', 'Owed to Vendor', 'Pay', 'Status', 'Actions'];
   const set = (k) => (e) => setEditing((v) => ({ ...v, [k]: e.target.value }));
 
   const save = async (e) => {
@@ -89,7 +91,7 @@ export default function Vendors() {
               index={(list.pagination.page - 1) * list.pagination.limit + i + 1}
               row={v}
               columns={[
-                <Avatar name={v.name} sub={v.company} />,
+                <Link to={`/admin/vendors/${v.id}`} className="block hover:opacity-80"><Avatar name={v.name} sub={v.company} /></Link>,
                 <span className="block">
                   {v.email && <span className="block">{v.email}</span>}
                   {v.phone && <span className="block text-xs">{v.phone}</span>}
@@ -98,19 +100,20 @@ export default function Vendors() {
                 <span className="text-gray-950 font-medium">{money(v.totals?.bought || 0)}</span>,
                 <span className="text-emerald-600 font-semibold">{money(v.totals?.paid || 0)}</span>,
                 <span className={v.totals?.owed > 0 ? 'text-red-600 font-bold' : 'text-gray-500'}>{money(v.totals?.owed || 0)}</span>,
-                <button
-                  type="button"
-                  onClick={() => setPayingVendor(v)}
-                  disabled={!v.totals?.owed || v.totals.owed <= 0}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
-                    v.totals?.owed > 0
-                      ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:border-purple-300 shadow-2xs'
-                      : 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed opacity-50'
-                  }`}
-                  title={v.totals?.owed > 0 ? 'Pay vendor portion via check, cash, or wire' : 'No balance owed'}
-                >
-                  Update Balance
-                </button>,
+                can('receiving', 'edit') ? (
+                  <button
+                    type="button"
+                    onClick={() => setPayingVendor(v)}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md border transition-all cursor-pointer ${
+                      v.totals?.owed > 0
+                        ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                    }`}
+                    title={v.totals?.owed > 0 ? 'Pay this vendor' : 'Nothing owed: a payment now is kept as credit'}
+                  >
+                    <DollarSign size={13} /> Pay
+                  </button>
+                ) : '-',
                 <Toggle name={`vend-${v.id}`} checked={v.status} onChange={(s) => toggle(v, s)} disabled={!can('receiving', 'edit')} />,
               ]}
               actions={actions}

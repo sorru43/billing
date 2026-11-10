@@ -4,6 +4,7 @@ import { query } from '../db.js';
 import { requirePerm } from '../auth.js';
 import { h, ok, fail, validate } from '../http.js';
 import { getSetting } from '../settings.js';
+import { ALERT_SQL } from '../stock.js';
 import { reportPdf, toCsv, PRICE_LEVELS } from '../pdf.js';
 import { sendMail } from '../mailer.js';
 
@@ -25,7 +26,8 @@ const schema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
   until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
   categoryId: z.string().uuid().optional().or(z.literal('')),
-  threshold: z.coerce.number().int().min(0).max(1e6).default(5),
+  // blank = each product's own low stock alert level
+  threshold: z.preprocess((v) => (v === '' || v == null ? null : v), z.coerce.number().int().min(0).max(1e6).nullable()).default(null),
 });
 
 const n2 = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -83,7 +85,7 @@ async function build(b, sym) {
     };
   }
 
-  const extra = { inventory: '', 'price-list': 'AND p.status = true', 'low-stock': `AND p.quantity > 0 AND p.quantity <= ${b.threshold}`, 'out-of-stock': 'AND p.quantity <= 0' }[b.type];
+  const extra = { inventory: '', 'price-list': 'AND p.status = true', 'low-stock': `AND p.quantity > 0 AND p.quantity <= ${b.threshold == null ? ALERT_SQL : b.threshold}`, 'out-of-stock': 'AND p.quantity <= 0' }[b.type];
   const { rows } = await query(productSql(extra));
 
   if (b.type === 'price-list') {
@@ -110,7 +112,7 @@ async function build(b, sym) {
   return {
     subtitle: {
       inventory: 'All products with stock on hand and valuation',
-      'low-stock': `Products with 1–${b.threshold} units left`,
+      'low-stock': b.threshold == null ? 'Products at or below their own alert level' : `Products with 1–${b.threshold} units left`,
       'out-of-stock': 'Products with no stock',
     }[b.type],
     summary: [

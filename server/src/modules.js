@@ -6,10 +6,11 @@ export const MODULE_GROUPS = [
     children: [
       { slug: 'products', moduleName: 'Products' },
       { slug: 'customers', moduleName: 'Customers' },
-      { slug: 'categories', moduleName: 'Categories' },
+      { slug: 'categories', moduleName: 'Categories & Brands' },
       { slug: 'invoices', moduleName: 'Invoices' },
       { slug: 'returns', moduleName: 'Returns' },
       { slug: 'receiving', moduleName: 'Receiving Inventory & Vendors' },
+      { slug: 'import_export', moduleName: 'Import / Export (products & customers)' },
     ],
   },
   { moduleName: 'Reports', children: [{ slug: 'reports', moduleName: 'Reports (send by email)' }] },

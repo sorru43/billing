@@ -8,7 +8,7 @@ const keyOf = (o1, o2) => `${o1.toLowerCase()}\u0000${(o2 || '').toLowerCase()}`
 
 // Grid of a matrix item's variants (rows = attribute 1, columns = attribute 2):
 // type a quantity in each cell, then every non-zero cell becomes an invoice line.
-export default function MatrixGridModal({ matrixId, priceField, onClose, onAdd }) {
+export default function MatrixGridModal({ matrixId, priceField, onClose, onAdd, allowOversell = false }) {
   const money = useMoney();
   const [matrix, setMatrix] = useState(null);
   const [qty, setQty] = useState({});
@@ -33,7 +33,7 @@ export default function MatrixGridModal({ matrixId, priceField, onClose, onAdd }
   const picked = [...byKey.values()].filter((v) => Number(qty[v.id]) > 0);
   const units = picked.reduce((a, v) => a + Number(qty[v.id]), 0);
   const amount = picked.reduce((a, v) => a + Number(qty[v.id]) * Number(v[priceField]), 0);
-  const over = picked.some((v) => Number(qty[v.id]) > v.quantity);
+  const over = !allowOversell && picked.some((v) => Number(qty[v.id]) > v.quantity);
 
   const add = () => {
     onAdd(picked.map((v) => ({ product: { ...v, matrix: { id: matrix.id, name: matrix.name } }, quantity: Number(qty[v.id]) })));
@@ -76,14 +76,14 @@ export default function MatrixGridModal({ matrixId, priceField, onClose, onAdd }
                           <input
                             type="number"
                             min="0"
-                            max={v.quantity}
+                            max={allowOversell ? undefined : v.quantity}
                             step="1"
                             value={q}
-                            disabled={v.quantity <= 0}
+                            disabled={!allowOversell && v.quantity <= 0}
                             placeholder="0"
                             aria-label={`${r} ${c} quantity`}
                             onChange={(e) => setQty((s) => ({ ...s, [v.id]: e.target.value }))}
-                            className={`w-20 h-9 p-1.5 text-center border rounded focus:outline-none focus:ring-1 focus:ring-purple-600 ${bad ? 'border-red-500 text-red-600' : 'border-gray-200 text-gray-700'} disabled:bg-gray-50`}
+                            className={`w-20 h-9 p-1.5 text-center border rounded focus:outline-none focus:ring-1 focus:ring-purple-600 ${bad ? (allowOversell ? 'border-amber-500 text-amber-700' : 'border-red-500 text-red-600') : 'border-gray-200 text-gray-700'} disabled:bg-gray-50`}
                           />
                           <p className={`text-[11px] mt-0.5 ${v.quantity <= 0 ? 'text-red-600' : 'text-gray-500'}`}>
                             {v.quantity} in stock · {money(v[priceField])}
@@ -97,6 +97,9 @@ export default function MatrixGridModal({ matrixId, priceField, onClose, onAdd }
             </table>
           </div>
           {over && <p className="text-xs text-red-600">Some quantities are more than what is in stock.</p>}
+          {allowOversell && picked.some((v) => Number(qty[v.id]) > v.quantity) && (
+            <p className="text-xs text-amber-700">Some quantities are more than what is in stock — allowed (out-of-stock selling is on); stock will go below zero.</p>
+          )}
           <div className="flex flex-wrap justify-between items-center gap-3 border-t border-gray-200 pt-3">
             <p className="text-sm text-gray-700">
               <span className="font-semibold text-gray-950">{picked.length}</span> variants · <span className="font-semibold text-gray-950">{units}</span> units ·{' '}

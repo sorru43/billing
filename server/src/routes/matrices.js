@@ -15,6 +15,12 @@ const MAX_VARIANTS = 600;
 const price = (label) =>
   z.coerce.number({ error: `${label} must be a number` }).min(0, `${label} cannot be negative`).max(1e11);
 const optName = z.string().trim().max(40);
+// blank = use the default alert level (stock.js)
+const alertLevel = z.preprocess(
+  (v) => (v === '' || v === undefined ? null : v),
+  z.coerce.number().int('Alert level must be a whole number').min(0, 'Alert level cannot be negative').max(1e9).nullable(),
+).default(null);
+const optionalUuid = (msg) => z.preprocess((v) => (v === '' || v === undefined ? null : v), z.string().uuid(msg).nullable()).default(null);
 const optValue = z.string().trim().min(1, 'Value cannot be empty').max(60);
 
 const variantSchema = z.object({
@@ -22,18 +28,22 @@ const variantSchema = z.object({
   option1: optValue,
   option2: z.string().trim().max(60).default(''),
   barcode: z.string().trim().max(64).regex(/^[A-Za-z0-9\-_.]*$/, 'Barcode may only contain letters, numbers, - _ .').default(''),
-  quantity: z.coerce.number().int('Quantity must be a whole number').min(0, 'Quantity cannot be negative').max(1e9),
+  // may be below zero when out-of-stock selling is on (sold before the stock was received)
+  quantity: z.coerce.number().int('Quantity must be a whole number').min(-1e9).max(1e9),
   cost: price('Cost'),
   selling_price: price('Selling price'),
   top_customer_price: price('Top customer price'),
   jobber_price: price('Jobber price'),
   status: z.boolean().default(true),
+  low_stock_alert: alertLevel,
 });
 
 const schema = z
   .object({
     name: z.string().trim().min(1, 'Name is required').max(150),
     category_id: z.string().uuid('Category is required'),
+    brand_id: optionalUuid('Choose a brand'),
+    low_stock_alert: alertLevel,
     description: z.string().max(5000).default(''),
     status: z.boolean().default(true),
     attr1_name: optName.min(1, 'Attribute name is required'),
@@ -83,6 +93,9 @@ const outMatrix = (m) => ({
   name: m.name,
   category_id: m.category_id,
   category: m.category_id ? { id: m.category_id, name: m.category_name } : null,
+  brand_id: m.brand_id,
+  brand: m.brand_id ? { id: m.brand_id, name: m.brand_name } : null,
+  low_stock_alert: m.low_stock_alert,
   description: m.description,
   status: m.status,
   attr1_name: m.attr1_name,
@@ -110,11 +123,13 @@ const outVariant = (p) => ({
   jobber_price: p.jobber_price,
   description: p.description,
   status: p.status,
+  low_stock_alert: p.low_stock_alert,
 });
 
 async function loadMatrix(id, db = { query }) {
   const { rows } = await db.query(
-    `SELECT m.*, c.name AS category_name FROM product_matrices m LEFT JOIN categories c ON c.id = m.category_id WHERE m.id = $1`,
+    `SELECT m.*, c.name AS category_name, b.name AS brand_name FROM product_matrices m
+       LEFT JOIN categories c ON c.id = m.category_id LEFT JOIN brands b ON b.id = m.brand_id WHERE m.id = $1`,
     [id],
   );
   if (!rows.length) return null;
@@ -171,20 +186,21 @@ function pgError(e, res) {
 // Create or update the matrix row and sync its variants in one transaction.
 async function save(client, b, id, isAdmin) {
   const vals = [b.name, b.category_id, b.description, b.status, b.attr1_name, JSON.stringify(b.attr1_values), b.attr2_name,
-    JSON.stringify(b.attr2_values), b.cost, b.selling_price, b.top_customer_price, b.jobber_price];
+    JSON.stringify(b.attr2_values), b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.brand_id, b.low_stock_alert];
   let matrixId = id;
   if (id) {
     const { rowCount } = await client.query(
       `UPDATE product_matrices SET name=$1, category_id=$2, description=$3, status=$4, attr1_name=$5, attr1_values=$6, attr2_name=$7,
-              attr2_values=$8, cost=$9, selling_price=$10, top_customer_price=$11, jobber_price=$12, updated_at=now() WHERE id=$13`,
+              attr2_values=$8, cost=$9, selling_price=$10, top_customer_price=$11, jobber_price=$12, brand_id=$13, low_stock_alert=$14,
+              updated_at=now() WHERE id=$15`,
       [...vals, id],
     );
     if (!rowCount) return { notFound: true };
   } else {
     const { rows } = await client.query(
       `INSERT INTO product_matrices (name, category_id, description, status, attr1_name, attr1_values, attr2_name, attr2_values,
-                                     cost, selling_price, top_customer_price, jobber_price)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+                                     cost, selling_price, top_customer_price, jobber_price, brand_id, low_stock_alert)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
       vals,
     );
     matrixId = rows[0].id;
@@ -203,18 +219,19 @@ async function save(client, b, id, isAdmin) {
 
   for (const v of b.variants) {
     const params = [variantName(b.name, v.option1, v.option2), v.cost, v.selling_price, v.top_customer_price, v.jobber_price, v.quantity,
-      v.barcode || null, b.description, b.category_id, v.status, matrixId, v.option1, v.option2];
+      v.barcode || null, b.description, b.category_id, v.status, matrixId, v.option1, v.option2, b.brand_id, v.low_stock_alert];
     if (v.id) {
       await client.query(
         `UPDATE products SET name=$1, cost=$2, selling_price=$3, top_customer_price=$4, jobber_price=$5, quantity=$6, barcode=$7,
-                description=$8, category_id=$9, status=$10, matrix_id=$11, option1=$12, option2=$13, updated_at=now() WHERE id=$14`,
+                description=$8, category_id=$9, status=$10, matrix_id=$11, option1=$12, option2=$13, brand_id=$14, low_stock_alert=$15,
+                updated_at=now() WHERE id=$16`,
         [...params, v.id],
       );
     } else {
       await client.query(
         `INSERT INTO products (name, cost, selling_price, top_customer_price, jobber_price, quantity, barcode, description, category_id,
-                               status, matrix_id, option1, option2)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                               status, matrix_id, option1, option2, brand_id, low_stock_alert)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         params,
       );
     }
@@ -227,6 +244,8 @@ async function handleSave(req, res, id) {
   if (!b) return;
   if (!(await query(`SELECT 1 FROM categories WHERE id=$1`, [b.category_id])).rowCount)
     return fail(res, 422, 'Invalid category', { category_id: 'Category not found' });
+  if (b.brand_id && !(await query(`SELECT 1 FROM brands WHERE id=$1`, [b.brand_id])).rowCount)
+    return fail(res, 422, 'Invalid brand', { brand_id: 'Brand not found' });
   let result;
   try {
     result = await tx(async (client) => {

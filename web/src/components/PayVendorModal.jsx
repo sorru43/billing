@@ -1,16 +1,10 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
-import { Landmark, FileCheck, Banknote, CreditCard, Layers, DollarSign, Calendar, FileText } from 'lucide-react';
+import { DollarSign, Calendar, FileText } from 'lucide-react';
+import { VENDOR_METHODS, MethodButtons, paymentSummary } from './PaymentMethods.jsx';
 import { api } from '../api.js';
 import { useMoney } from '../auth.jsx';
 
-const METHODS = [
-  { id: 'check', label: 'Check', icon: <FileCheck size={16} /> },
-  { id: 'cash', label: 'Cash', icon: <Banknote size={16} /> },
-  { id: 'wire', label: 'Wire Transfer', icon: <Landmark size={16} /> },
-  { id: 'card', label: 'Credit / Debit', icon: <CreditCard size={16} /> },
-  { id: 'other', label: 'Other', icon: <Layers size={16} /> },
-];
 
 export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onDone }) {
   const money = useMoney();
@@ -24,6 +18,9 @@ export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onD
   const totalOwed = receiving
     ? Math.max(0, Number(receiving.balance ?? (Number(receiving.total) - Number(receiving.paidAmount || 0))))
     : Math.max(0, Number(vendor?.totals?.owed || 0));
+  const credit = Number(vendor?.totals?.creditBalance || 0);
+  // Paying one receiving of a saved vendor: extra goes to their other receivings, then credit.
+  const carriesOver = !receiving || Boolean(receiving.vendorId);
 
   const totalReceived = receiving ? Number(receiving.total) : Number(vendor?.totals?.bought || 0);
   const alreadyPaid = receiving ? Number(receiving.paidAmount || 0) : Number(vendor?.totals?.paid || 0);
@@ -43,19 +40,10 @@ export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onD
   const numAmount = parseFloat(amount) || 0;
   const remainingAfter = Math.max(0, Math.round((totalOwed - numAmount) * 100) / 100);
 
-  const getRefLabel = () => {
-    if (method === 'check') return 'Check Number';
-    if (method === 'wire') return 'Wire Transfer / Bank Ref #';
-    if (method === 'card') return 'Card Auth / Ref #';
-    return 'Reference / Memo';
-  };
-
-  const getRefPlaceholder = () => {
-    if (method === 'check') return 'e.g. CHK-100452';
-    if (method === 'wire') return 'e.g. WIRE-884920';
-    if (method === 'card') return 'e.g. Auth #8832';
-    return 'e.g. Counter cash / transfer';
-  };
+  const extra = Math.max(0, Math.round((numAmount - totalOwed) * 100) / 100);
+  const m = VENDOR_METHODS.find((x) => x.id === method) || VENDOR_METHODS[0];
+  const getRefLabel = () => m.ref;
+  const getRefPlaceholder = () => m.ph;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -67,7 +55,7 @@ export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onD
     try {
       if (receiving) {
         // Individual receiving invoice payment
-        await api.patch(`/receivings/${receiving.id}/status`, {
+        const { data } = await api.patch(`/receivings/${receiving.id}/status`, {
           status: numAmount >= totalOwed ? 'paid' : 'partial',
           amount: numAmount,
           paymentMethod: method,
@@ -75,17 +63,18 @@ export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onD
           notes,
           paymentDate,
         });
-        toast.success(`Payment of ${money(numAmount)} recorded via ${method.toUpperCase()}`);
+        const summary = data ? paymentSummary(data, money) : '';
+        toast.success(`Payment of ${money(numAmount)} recorded via ${m.label}${summary ? `. ${summary}` : ''}`);
       } else {
         // Vendor overall balance payment (FIFO across open receivings)
-        await api.post(`/vendors/${vendor.id}/payments`, {
+        const { data } = await api.post(`/vendors/${vendor.id}/payments`, {
           amount: numAmount,
           paymentMethod: method,
           reference,
           notes,
           paymentDate,
         });
-        toast.success(`Vendor payment of ${money(numAmount)} recorded via ${method.toUpperCase()}`);
+        toast.success(`Vendor payment of ${money(numAmount)} recorded via ${m.label}. ${paymentSummary(data, money)}`);
       }
       onClose();
       if (onDone) onDone();
@@ -139,23 +128,7 @@ export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onD
           {/* Payment Method Selector */}
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Payment Method</label>
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
-              {METHODS.map((m) => (
-                <button
-                  type="button"
-                  key={m.id}
-                  onClick={() => setMethod(m.id)}
-                  className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
-                    method === m.id
-                      ? 'border-purple-600 bg-purple-50 text-purple-700 ring-1 ring-purple-600 font-semibold'
-                      : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  <span className="mb-1">{m.icon}</span>
-                  <span className="text-[11px] leading-tight text-center">{m.label}</span>
-                </button>
-              ))}
-            </div>
+            <MethodButtons methods={VENDOR_METHODS} value={method} onChange={setMethod} />
           </div>
 
           {/* Amount / Portion to Pay */}
@@ -190,7 +163,6 @@ export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onD
                 type="number"
                 step="0.01"
                 min="0.01"
-                max={totalOwed > 0 ? totalOwed * 2 : 1e7}
                 required
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
@@ -248,6 +220,16 @@ export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onD
               {remainingAfter === 0 && ' (Settled)'}
             </span>
           </div>
+          {extra > 0 && (
+            <p className={`text-xs font-semibold ${carriesOver ? 'text-purple-700' : 'text-amber-700'}`}>
+              {carriesOver
+                ? `${money(extra)} over this balance: it pays the vendor's other open receivings first, the rest is kept as credit for the next receiving.`
+                : `Only ${money(totalOwed)} is recorded: this receiving has no saved vendor to keep the extra ${money(extra)} for.`}
+            </p>
+          )}
+          {credit > 0 && (
+            <p className="text-xs text-emerald-700">{money(credit)} credit with this vendor already (used by the next receiving).</p>
+          )}
 
           {/* Action buttons */}
           <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">

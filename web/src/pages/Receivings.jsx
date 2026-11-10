@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { CircleCheckBig, Eye, Undo2, X } from 'lucide-react';
+import { CircleCheckBig, DollarSign, Eye, Undo2, X } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
 import { ListToolbar, PageHeader, Pagination, Row, StatusBadge, Table, TableState } from '../components/ui.jsx';
@@ -41,7 +41,8 @@ export default function Receivings() {
           : { label: 'Pay Portion / Mark Paid', icon: <CircleCheckBig size={14} />, onClick: () => setPayingReceiving(x) }),
     ].filter(Boolean);
 
-  const headers = ['#', 'Receiving ID', 'Vendor', 'Received On', 'Total', 'Paid', 'Owed', 'Status', 'Actions'];
+  const canPay = can('receiving', 'edit');
+  const headers = ['#', 'Receiving ID', 'Vendor', 'Received On', 'Total', 'Paid', 'Owed', 'Status', ...(canPay ? ['Pay'] : []), 'Actions'];
   return (
     <div className="space-y-4">
       <PageHeader
@@ -52,7 +53,7 @@ export default function Receivings() {
       {vendorId && (
         <div className="flex items-center gap-2 text-sm">
           <span className="bg-purple-100 text-purple-600 px-2 py-1 rounded-md">
-            Vendor: <b>{vendor?.name || '…'}</b>
+            Vendor: <Link to={`/admin/vendors/${vendorId}`} className="font-bold underline">{vendor?.name || '…'}</Link>
             {vendor && <> · owed {money(vendor.totals?.owed || 0)} · paid {money(vendor.totals?.paid || 0)}</>}
           </span>
           <button onClick={() => setParams({})} className="flex items-center gap-1 text-gray-500 hover:text-gray-900 cursor-pointer">
@@ -81,6 +82,17 @@ export default function Receivings() {
                   {money(x.balance ?? Math.max(0, x.total - (x.paidAmount || 0)))}
                 </span>,
                 <StatusBadge status={x.status} />,
+                ...(canPay
+                  ? [x.status !== 'paid' ? (
+                      <button
+                        type="button"
+                        onClick={() => setPayingReceiving(x)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                      >
+                        <DollarSign size={13} /> Pay
+                      </button>
+                    ) : <span className="text-xs text-gray-400">Paid</span>]
+                  : []),
               ]}
               actions={actions(x)}
             />

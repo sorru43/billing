@@ -31,6 +31,19 @@ r.put('/company', requirePerm('settings', 'edit'), h(async (req, res) => {
   ok(res, null, 'Company settings saved');
 }));
 
+// Inventory rules. Anyone signed in may read them (the invoice screen needs them); only settings editors change them.
+r.get('/inventory', h(async (req, res) => {
+  const s = await getSetting('inventory');
+  ok(res, { allowOutOfStockSales: s.allowOutOfStockSales === true });
+}));
+
+r.put('/inventory', requirePerm('settings', 'edit'), h(async (req, res) => {
+  const b = validate(z.object({ allowOutOfStockSales: z.boolean() }), req.body, res);
+  if (!b) return;
+  await setSetting('inventory', b);
+  ok(res, b, b.allowOutOfStockSales ? 'Out-of-stock selling turned ON' : 'Out-of-stock selling turned OFF');
+}));
+
 const rawImage = express.raw({ type: () => true, limit: LOGO_MAX_BYTES });
 
 r.put('/logo/:kind', requirePerm('settings', 'edit'), rawImage, h(async (req, res) => {

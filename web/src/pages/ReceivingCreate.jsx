@@ -82,10 +82,28 @@ export default function ReceivingCreate() {
   const [rows, setRows] = useState([newRow()]);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [po, setPo] = useState(null); // receiving a purchase order
 
   useEffect(() => {
     const id = params.get('vendorId');
     if (id) api.get(`/vendors/${id}`).then((r) => setVendor({ id: r.data.id, name: r.data.name })).catch(() => {});
+    const poId = params.get('po');
+    if (poId) {
+      api
+        .get(`/purchase-orders/${poId}`)
+        .then(({ data }) => {
+          if (data.status !== 'open') return toast.error(`${data.poNumber} is already ${data.status}`);
+          setPo(data);
+          setVendor({ id: data.vendorId || '', name: data.vendorName });
+          const lines = data.items
+            .filter((it) => it.product)
+            .map((it) => ({ ...newRow(), product: it.product, quantity: it.quantity, cost: it.cost }));
+          const missing = data.items.length - lines.length;
+          if (missing) toast.warn(`${missing} product(s) on this PO no longer exist and were left out`);
+          setRows([...lines, newRow()]);
+        })
+        .catch((e) => toast.error(e.message));
+    }
   }, [params]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -150,6 +168,7 @@ export default function ReceivingCreate() {
         ...form,
         vendorId: vendor.id,
         vendorName: vendor.name,
+        purchaseOrderId: po?.id || null,
         items: filled.map((l) => ({ productId: l.product.id, quantity: Number(l.quantity), cost: Number(l.cost) })),
       });
       toast.success(`${data.receivingNumber} saved — stock updated`);
@@ -171,6 +190,12 @@ export default function ReceivingCreate() {
   return (
     <form onSubmit={submit} className="max-w-7xl space-y-4 md:p-4 border border-gray-200 rounded">
       <h1 className="text-2xl font-bold text-gray-950">Receive Stock</h1>
+      {po && (
+        <p className="text-sm bg-blue-50 border border-blue-200 text-blue-800 rounded-md px-3 py-2">
+          Receiving purchase order <b>{po.poNumber}</b> ({po.vendorName}). Adjust quantities and costs to what actually arrived; saving closes the PO.
+        </p>
+      )}
+      {errors.purchaseOrderId && <p className="text-sm text-red-600">{errors.purchaseOrderId}</p>}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Vendor <span className="text-red-500">*</span></label>
