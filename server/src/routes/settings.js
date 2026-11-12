@@ -6,6 +6,7 @@ import express from 'express';
 import PDFDocument from 'pdfkit';
 import { getSetting, setSetting } from '../settings.js';
 import { LOGO_KINDS, LOGO_MAX_BYTES, LOGO_TYPES, sniffImage, saveLogo, deleteLogo } from '../logos.js';
+import { getBarcodeApiKey, maskApiKey, testBarcodeApiKey } from '../barcodeLookup.js';
 
 const r = Router();
 
@@ -71,6 +72,33 @@ r.delete('/logo/:kind', requirePerm('settings', 'edit'), h(async (req, res) => {
   if (!LOGO_KINDS.includes(req.params.kind)) return fail(res, 404, 'Not found');
   await deleteLogo(req.params.kind);
   ok(res, null, 'Logo reset to default');
+}));
+
+// Barcode Lookup API Settings (barcodelookup.com)
+r.get('/barcode-lookup', requirePerm('settings', 'view'), h(async (req, res) => {
+  const key = await getBarcodeApiKey();
+  ok(res, {
+    apiKey: maskApiKey(key),
+    hasKey: Boolean(key),
+  });
+}));
+
+r.put('/barcode-lookup', requirePerm('settings', 'edit'), h(async (req, res) => {
+  const apiKey = String(req.body?.apiKey || '').trim();
+  await setSetting('barcode_lookup', { apiKey });
+  ok(res, {
+    apiKey: maskApiKey(apiKey),
+    hasKey: Boolean(apiKey),
+  }, apiKey ? 'Barcode Lookup API key saved' : 'Barcode Lookup API key cleared');
+}));
+
+r.post('/barcode-lookup/test', requirePerm('settings', 'view'), h(async (req, res) => {
+  const apiKey = req.body?.apiKey ? String(req.body.apiKey).trim() : null;
+  const result = await testBarcodeApiKey(apiKey);
+  if (!result.ok) {
+    return fail(res, 400, result.error || 'Failed to connect to Barcode Lookup API');
+  }
+  ok(res, result, result.message);
 }));
 
 export default r;

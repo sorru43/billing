@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
+import { Loader2, Search, Sparkles } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { CancelButton, Field, Loader, SubmitButton, Toggle, inputCls } from '../components/ui.jsx';
@@ -20,6 +21,7 @@ function generateEan13() {
 export default function ProductForm() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { can } = useAuth();
   const [form, setForm] = useState(EMPTY);
   const [errors, setErrors] = useState({});
@@ -27,6 +29,8 @@ export default function ProductForm() {
   const [brands, setBrands] = useState([]);
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookupImage, setLookupImage] = useState('');
 
   useEffect(() => {
     api.get('/categories/options').then((r) => setCategories(r.data)).catch(() => {});
@@ -46,10 +50,48 @@ export default function ProductForm() {
         })
         .catch((e) => toast.error(e.message))
         .finally(() => setLoading(false));
+    } else if (location.state?.prefill) {
+      setForm((f) => ({ ...f, ...location.state.prefill }));
+      if (location.state.prefill.image) {
+        setLookupImage(location.state.prefill.image);
+      }
     }
-  }, [id]);
+  }, [id, location.state]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const handleLookup = async (code = form.barcode) => {
+    const b = String(code || '').trim();
+    if (!b) {
+      toast.info('Please enter or scan a barcode first');
+      return;
+    }
+    setLookingUp(true);
+    try {
+      const res = await api.get(`/products/lookup-barcode?barcode=${encodeURIComponent(b)}`);
+      if (res.data?.found && res.data?.product) {
+        const p = res.data.product;
+        setForm((f) => ({
+          ...f,
+          name: p.name || f.name,
+          description: p.description || (p.brand ? `Brand: ${p.brand}` : f.description),
+          category_id: res.data.matchedCategory?.id || f.category_id,
+        }));
+        if (p.image) setLookupImage(p.image);
+        toast.success(`Found on BarcodeLookup: ${p.name}`);
+      } else {
+        toast.info(res.data?.message || 'Product not found in Barcode Lookup database');
+      }
+    } catch (err) {
+      if (err.errors?.code === 'NO_API_KEY') {
+        toast.error('Barcode Lookup API key is not configured. Please add it in Settings.');
+      } else {
+        toast.error(err.message || 'Barcode lookup failed');
+      }
+    } finally {
+      setLookingUp(false);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -143,23 +185,57 @@ export default function ProductForm() {
           {money('top_customer_price', 'Top Customer Price')}
           {money('jobber_price', 'Jobber Price')}
           <Field label="Barcode" htmlFor="barcode" error={errors.barcode}>
-            <div className="mt-1 flex">
+            <div className="mt-1 flex gap-1">
               <input
                 id="barcode"
                 type="text"
                 maxLength={64}
                 value={form.barcode}
                 onChange={set('barcode')}
-                className="flex-grow block text-gray-700 p-2 w-full focus:outline-none focus:ring-1 focus:ring-purple-600 focus:border-purple-600 border border-gray-200 rounded-l-md "
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleLookup();
+                  }
+                }}
+                placeholder="Scan or enter barcode"
+                className="flex-grow block text-gray-700 p-2 w-full focus:outline-none focus:ring-1 focus:ring-purple-600 focus:border-purple-600 border border-gray-200 rounded-md text-sm"
               />
               <button
                 type="button"
+                onClick={() => handleLookup()}
+                disabled={lookingUp || !form.barcode}
+                className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-md hover:bg-purple-100 text-xs font-semibold flex items-center gap-1.5 focus:outline-none focus:ring-1 focus:ring-purple-600 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shadow-2xs"
+                title="Lookup product info from BarcodeLookup API"
+              >
+                {lookingUp ? <Loader2 size={14} className="animate-spin text-purple-600" /> : <Sparkles size={14} className="text-purple-600" />}
+                <span>{lookingUp ? 'Fetching...' : 'Lookup API'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setForm((f) => ({ ...f, barcode: generateEan13() }))}
-                className="px-3 py-2 bg-gray-200 text-gray-700 border border-l-0 border-gray-200 rounded-r-md hover:bg-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-purple-600 focus:border-purple-600 cursor-pointer"
+                className="px-2.5 py-2 bg-gray-100 text-gray-700 border border-gray-200 rounded-md hover:bg-gray-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-purple-600 cursor-pointer whitespace-nowrap"
+                title="Generate standard EAN-13 barcode"
               >
                 Generate
               </button>
             </div>
+            {lookupImage && (
+              <div className="mt-2 flex items-center gap-2 p-2 bg-purple-50/50 border border-purple-100 rounded-md text-xs text-purple-900">
+                <img src={lookupImage} alt="Product preview" className="w-9 h-9 object-contain rounded bg-white border border-gray-200" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold truncate">{form.name || 'Product photo'}</p>
+                  <p className="text-[10px] text-purple-600">Verified via BarcodeLookup</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLookupImage('')}
+                  className="text-gray-400 hover:text-gray-600 text-sm leading-none px-1 cursor-pointer"
+                >
+                  ×
+                </button>
+              </div>
+            )}
           </Field>
           <div>
             <label className="block text-sm font-medium text-gray-600">Status</label>

@@ -6,6 +6,7 @@ import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '.
 import { toCsv } from '../pdf.js';
 import { ALERT_SQL, DEFAULT_ALERT } from '../stock.js';
 import { parseCsv } from './customers.js';
+import { lookupBarcode } from '../barcodeLookup.js';
 
 const r = Router();
 
@@ -106,6 +107,59 @@ r.get('/search', h(async (req, res) => {
     variantCount: m.variant_count, quantity: m.total_qty,
   }));
   ok(res, [...matrices, ...rows.map(out)]);
+}));
+
+// Lookup product details via Barcode Lookup API (barcodelookup.com)
+r.get('/lookup-barcode', h(async (req, res) => {
+  if (!can(req, 'products', 'view') && !can(req, 'products', 'create') && !can(req, 'products', 'edit') && !can(req, 'receiving', 'create')) {
+    return fail(res, 403, 'You do not have permission to do this');
+  }
+
+  const barcode = String(req.query.barcode || '').trim();
+  if (!barcode) return fail(res, 422, 'Enter a barcode to lookup');
+
+  try {
+    const result = await lookupBarcode(barcode);
+    if (!result.found) {
+      return ok(res, { found: false, barcode, message: result.message || 'Product not found in Barcode Lookup database' });
+    }
+
+    // Try matching existing category in database
+    let matchedCategory = null;
+    if (result.product?.category) {
+      const parts = result.product.category.split('>').map((p) => p.trim()).filter(Boolean);
+      const candidates = [...parts.reverse(), result.product.brand].filter(Boolean);
+      for (const cand of candidates) {
+        const { rows } = await query(
+          `SELECT id, name FROM categories WHERE name ILIKE $1 AND status = true LIMIT 1`,
+          [`%${cand}%`],
+        );
+        if (rows.length) {
+          matchedCategory = rows[0];
+          break;
+        }
+      }
+    }
+
+    ok(res, {
+      found: true,
+      barcode,
+      product: result.product,
+      matchedCategory,
+      cached: result.cached || false,
+    });
+  } catch (err) {
+    if (err.code === 'NO_API_KEY') {
+      return fail(res, 400, err.message, { code: 'NO_API_KEY' });
+    }
+    if (err.code === 'INVALID_KEY') {
+      return fail(res, 401, err.message, { code: 'INVALID_KEY' });
+    }
+    if (err.code === 'QUOTA_EXCEEDED') {
+      return fail(res, 429, err.message, { code: 'QUOTA_EXCEEDED' });
+    }
+    return fail(res, 502, err.message || 'Failed to lookup barcode');
+  }
 }));
 
 const MAX_IMPORT_ROWS = 5000;

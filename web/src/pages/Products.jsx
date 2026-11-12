@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
-import { Bell, FileSpreadsheet, SquarePen, Trash2, Upload } from 'lucide-react';
+import { Barcode, Bell, FileSpreadsheet, SquarePen, Trash2, Upload } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
 import { Avatar, ConfirmModal, ListToolbar, PageHeader, Pagination, Row, Table, TableState, Toggle } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
 import ProductImportModal from '../components/ProductImportModal.jsx';
+import BarcodeLookupModal from '../components/BarcodeLookupModal.jsx';
 
 // Low stock alert level, editable in place (also works for matrix variants such as one flavor).
 function AlertCell({ product, canEdit, onSaved }) {
@@ -70,6 +71,7 @@ export default function Products() {
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [lookupOpen, setLookupOpen] = useState(false);
 
   const actions = [
     can('products', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (p) => navigate(p.matrix ? `/admin/matrix/edit/${p.matrix.id}` : `/admin/products/edit/${p.id}`) },
@@ -109,6 +111,11 @@ export default function Products() {
         actionLabel={can('products', 'create') && 'New Product'}
         onAction={() => navigate('/admin/products/new')}
       >
+        {can('products', 'create') && (
+          <button type="button" onClick={() => setLookupOpen(true)} className={btnCls} title="Scan or lookup barcode with BarcodeLookup API">
+            <Barcode size={14} className="text-purple-600" /> Scan Barcode
+          </button>
+        )}
         {can('import_export') && (
           <a href="/api/products/export" download className={btnCls}>
           <FileSpreadsheet size={14} /> Export
@@ -163,6 +170,7 @@ export default function Products() {
         isDeleting={deleting}
       />
       <ProductImportModal isOpen={importing} onClose={() => setImporting(false)} onDone={list.reload} />
+      <BarcodeLookupModal isOpen={lookupOpen} onClose={() => setLookupOpen(false)} />
     </div>
   );
 }

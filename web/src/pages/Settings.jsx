@@ -88,6 +88,7 @@ export function CompanySettings() {
         />
       </div>
       <InventorySettings editable={editable} />
+      <BarcodeLookupSettings editable={editable} />
     </div>
   );
 }
@@ -126,6 +127,111 @@ function InventorySettings({ editable }) {
             </p>
           </div>
           <Toggle name="allow-oversell" checked={allow} disabled={!editable || saving} onChange={change} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BarcodeLookupSettings({ editable }) {
+  const [apiKey, setApiKey] = useState('');
+  const [hasKey, setHasKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .get('/settings/barcode-lookup')
+      .then((r) => {
+        setHasKey(r.data.hasKey);
+        if (r.data.apiKey) setApiKey(r.data.apiKey);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await api.put('/settings/barcode-lookup', { apiKey });
+      setHasKey(r.data.hasKey);
+      setApiKey(r.data.apiKey || '');
+      toast.success(r.message || 'Barcode Lookup API key saved');
+    } catch (e) {
+      toast.error(e.message || 'Failed to save API key');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const testKey = async () => {
+    setTesting(true);
+    try {
+      const r = await api.post('/settings/barcode-lookup/test', { apiKey });
+      toast.success(r.data?.message || 'Connection successful! Barcode Lookup API is working.');
+    } catch (e) {
+      toast.error(e.message || 'Test failed. Please check the API key.');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-lg border border-gray-200 space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-xl font-bold text-gray-950">Barcode Lookup API</h3>
+            {hasKey && (
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                Connected
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-500 mt-1">
+            Connect your <a href="https://www.barcodelookup.com/api" target="_blank" rel="noreferrer" className="text-purple-600 underline font-medium hover:text-purple-800">barcodelookup.com</a> API key to automatically autofill product names, categories, descriptions, and photos when scanning barcodes.
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <Loader className="h-12" />
+      ) : (
+        <div className="space-y-3 max-w-xl">
+          <Field label="API Key">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Enter your Barcode Lookup API key"
+                value={apiKey}
+                disabled={!editable}
+                onChange={(e) => setApiKey(e.target.value)}
+                className={inputCls}
+              />
+              <button
+                type="button"
+                onClick={testKey}
+                disabled={testing || (!apiKey && !hasKey)}
+                className="px-3.5 py-2 text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-md border border-gray-300 disabled:opacity-50 cursor-pointer whitespace-nowrap transition-colors"
+              >
+                {testing ? 'Testing...' : 'Test Connection'}
+              </button>
+            </div>
+          </Field>
+
+          {editable && (
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving}
+                className="px-4 py-2 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-md disabled:opacity-50 cursor-pointer shadow-xs transition-colors"
+              >
+                {saving ? 'Saving...' : 'Save API Key'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
