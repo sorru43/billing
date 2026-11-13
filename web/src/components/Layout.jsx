@@ -4,74 +4,81 @@ import {
   ArrowDownUp, Box, PackagePlus, Undo2, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
 } from 'lucide-react';
 import { useAuth, Logo } from '../auth.jsx';
+import { useI18n, LanguageSelector } from '../i18n.jsx';
 
 const MENU = [
-  { type: 'header', title: 'Main' },
-  { type: 'link', to: '/admin', icon: <House size={16} />, title: 'Dashboard', slug: 'dashboard' },
-  { type: 'header', title: 'Inventory & Sales' },
+  { type: 'header', key: 'nav.main', title: 'Main' },
+  { type: 'link', to: '/admin', icon: <House size={16} />, key: 'nav.dashboard', title: 'Dashboard', slug: 'dashboard' },
+  { type: 'header', key: 'nav.inventory_sales', title: 'Inventory & Sales' },
   {
     type: 'collapsible',
     id: 'products',
+    key: 'nav.products_services',
     icon: <Box size={16} />,
     title: 'Product / Services',
     children: [
-      { to: '/admin/products', title: 'Products', slug: 'products', addPath: '/admin/products/new' },
-      { to: '/admin/matrix', title: 'Matrix Items', slug: 'products', addPath: '/admin/matrix/new' },
-      { to: '/admin/categories', title: 'Categories', slug: 'categories' },
-      { to: '/admin/brands', title: 'Brands', slug: 'categories' },
+      { to: '/admin/products', key: 'nav.products', title: 'Products', slug: 'products', addPath: '/admin/products/new' },
+      { to: '/admin/matrix', key: 'nav.matrix_items', title: 'Matrix Items', slug: 'products', addPath: '/admin/matrix/new' },
+      { to: '/admin/categories', key: 'nav.categories', title: 'Categories', slug: 'categories' },
+      { to: '/admin/brands', key: 'nav.brands', title: 'Brands', slug: 'categories' },
     ],
   },
-  { type: 'link', to: '/admin/customers', icon: <Contact size={16} />, title: 'Customers', slug: 'customers' },
+  { type: 'link', to: '/admin/customers', icon: <Contact size={16} />, key: 'nav.customers', title: 'Customers', slug: 'customers' },
   {
     type: 'link',
     to: '/admin/invoices',
     icon: <ReceiptText size={16} />,
+    key: 'nav.invoices',
     title: 'Invoices',
     slug: 'invoices',
     addPath: '/admin/invoices/create-invoice',
   },
-  { type: 'link', to: '/admin/returns', icon: <Undo2 size={16} />, title: 'Returns', slug: 'returns', addPath: '/admin/returns/new' },
+  { type: 'link', to: '/admin/returns', icon: <Undo2 size={16} />, key: 'nav.returns', title: 'Returns', slug: 'returns', addPath: '/admin/returns/new' },
   {
     type: 'collapsible',
     id: 'receiving',
+    key: 'nav.receiving_inventory',
     icon: <PackagePlus size={16} />,
     title: 'Receiving Inventory',
     children: [
-      { to: '/admin/receiving', title: 'Receivings', slug: 'receiving', addPath: '/admin/receiving/new' },
-      { to: '/admin/purchase-orders', title: 'Purchase Orders', slug: 'receiving', addPath: '/admin/purchase-orders/new' },
-      { to: '/admin/vendors', title: 'Vendors', slug: 'receiving' },
+      { to: '/admin/receiving', key: 'nav.receivings', title: 'Receivings', slug: 'receiving', addPath: '/admin/receiving/new' },
+      { to: '/admin/purchase-orders', key: 'nav.purchase_orders', title: 'Purchase Orders', slug: 'receiving', addPath: '/admin/purchase-orders/new' },
+      { to: '/admin/vendors', key: 'nav.vendors', title: 'Vendors', slug: 'receiving' },
     ],
   },
   {
     type: 'link',
     to: '/admin/import-export',
     icon: <ArrowDownUp size={16} />,
+    key: 'nav.import_export',
     title: 'Import / Export',
     slug: null,
     check: (can) => can('import_export') && (can('products') || can('customers')),
   },
-  { type: 'header', title: 'Roles & Permissions' },
+  { type: 'header', key: 'nav.roles_permissions', title: 'Roles & Permissions' },
   {
     type: 'collapsible',
     id: 'roles',
+    key: 'nav.roles_permissions',
     icon: <ShieldHalf size={16} />,
     title: 'Roles & Permissions',
     children: [
-      { to: '/admin/users', title: 'Users', slug: 'users' },
-      { to: '/admin/roles', title: 'Roles & Permissions', slug: 'roles' },
+      { to: '/admin/users', key: 'nav.users', title: 'Users', slug: 'users' },
+      { to: '/admin/roles', key: 'nav.roles', title: 'Roles & Permissions', slug: 'roles' },
     ],
   },
-  { type: 'header', title: 'Reports' },
-  { type: 'link', to: '/admin/reports', icon: <ChartNoAxesColumn size={16} />, title: 'Reports', slug: 'reports' },
-  { type: 'header', title: 'Settings' },
+  { type: 'header', key: 'nav.reports', title: 'Reports' },
+  { type: 'link', to: '/admin/reports', icon: <ChartNoAxesColumn size={16} />, key: 'nav.reports', title: 'Reports', slug: 'reports' },
+  { type: 'header', key: 'nav.settings', title: 'Settings' },
   {
     type: 'collapsible',
     id: 'settings',
+    key: 'nav.settings',
     icon: <Settings size={16} />,
     title: 'Settings',
     children: [
-      { to: '/admin/settings/company-settings', title: 'Company Settings', slug: 'settings' },
-      { to: '/admin/settings/profile', title: 'Profile', slug: null },
+      { to: '/admin/settings/company-settings', key: 'nav.company_settings', title: 'Company Settings', slug: 'settings' },
+      { to: '/admin/settings/profile', key: 'nav.profile', title: 'Profile', slug: null },
     ],
   },
 ];
@@ -91,6 +98,7 @@ function Sidebar({ isOpen }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { can, logout } = useAuth();
+  const { t } = useI18n();
 
   const items = useMemo(() => {
     const visible = MENU.map((item) => {
@@ -135,12 +143,12 @@ function Sidebar({ isOpen }) {
             const first = headerIndex++ === 0;
             return (
               <p
-                key={item.title}
+                key={item.key || item.title}
                 className={`${first ? '' : 'mt-4 pt-2 border-t border-gray-200'} mb-1 text-xs font-medium text-gray-400 uppercase tracking-wider transition-opacity duration-300 ease-in-out ${
                   isOpen ? 'opacity-100' : 'opacity-0'
                 }`}
               >
-                {item.title}
+                {t(item.key, item.title)}
               </p>
             );
           }
@@ -152,12 +160,12 @@ function Sidebar({ isOpen }) {
                   <div className="flex items-center">
                     {item.icon}
                     <span className={`ml-2 transition-opacity font-medium duration-300 whitespace-nowrap ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                      {item.title}
+                      {t(item.key, item.title)}
                     </span>
                   </div>
                 </Link>
                 {isOpen && item.addPath && can(item.slug, 'create') && (
-                  <Link to={item.addPath} className={addBtnCls('group-hover:opacity-100')} aria-label={`New ${item.title}`}>
+                  <Link to={item.addPath} className={addBtnCls('group-hover:opacity-100')} aria-label={`New ${t(item.key, item.title)}`}>
                     <Plus size={18} />
                   </Link>
                 )}
@@ -176,7 +184,7 @@ function Sidebar({ isOpen }) {
                 <div className="flex items-center">
                   {item.icon}
                   <span className={`ml-2 transition-opacity duration-300 whitespace-nowrap font-medium ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                    {item.title}
+                    {t(item.key, item.title)}
                   </span>
                 </div>
                 {isOpen && <ChevronDown size={16} className={`transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />}
@@ -186,10 +194,10 @@ function Sidebar({ isOpen }) {
                   {item.children.map((c) => (
                     <div key={c.to} className="relative group/subitem">
                       <NavLink to={c.to} className={subLinkCls}>
-                        <span>{c.title}</span>
+                        <span>{t(c.key, c.title)}</span>
                       </NavLink>
                       {c.addPath && can(c.slug, 'create') && (
-                        <Link to={c.addPath} className={addBtnCls('group-hover/subitem:opacity-100')} aria-label={`New ${c.title}`}>
+                        <Link to={c.addPath} className={addBtnCls('group-hover/subitem:opacity-100')} aria-label={`New ${t(c.key, c.title)}`}>
                           <Plus size={18} />
                         </Link>
                       )}
@@ -233,12 +241,13 @@ function Sidebar({ isOpen }) {
 
 function Header({ toggleSidebar }) {
   const { user, logout, can } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [quick, setQuick] = useState(false);
   const [menu, setMenu] = useState(false);
   const quickItems = [
-    can('invoices', 'create') && { label: 'New Invoice', icon: <ReceiptText size={18} />, to: '/admin/invoices/create-invoice' },
-    can('products', 'create') && { label: 'New Product', icon: <Box size={18} />, to: '/admin/products/new' },
+    can('invoices', 'create') && { label: t('nav.new_invoice', 'New Invoice'), icon: <ReceiptText size={18} />, to: '/admin/invoices/create-invoice' },
+    can('products', 'create') && { label: t('nav.new_product', 'New Product'), icon: <Box size={18} />, to: '/admin/products/new' },
   ].filter(Boolean);
 
   return (
@@ -248,7 +257,8 @@ function Header({ toggleSidebar }) {
           <Menu className="w-6 h-6" />
         </button>
       </div>
-      <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-3">
+        <LanguageSelector />
         {quickItems.length > 0 && (
           <div className="relative">
             <button
@@ -307,7 +317,7 @@ function Header({ toggleSidebar }) {
                   role="menuitem"
                 >
                   <UserRound className="w-4 h-4 mr-3 text-gray-400" />
-                  Profile
+                  {t('nav.profile', 'Profile')}
                 </Link>
                 <Link
                   to="/admin/settings/profile#change-login"
@@ -324,7 +334,7 @@ function Header({ toggleSidebar }) {
                   role="menuitem"
                 >
                   <LogOut className="w-4 h-4 mr-3 text-gray-400" />
-                  Logout
+                  {t('nav.logout', 'Logout')}
                 </button>
               </div>
             </div>

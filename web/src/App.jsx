@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider, useAuth } from './auth.jsx';
+import { LanguageProvider } from './i18n.jsx';
 import Layout from './components/Layout.jsx';
 import { Loader } from './components/ui.jsx';
 import Login from './pages/Login.jsx';
@@ -96,64 +97,66 @@ const g = (slug, el, action) => (
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/admin/login" element={<Login />} />
-          <Route
-            path="/admin"
-            element={
-              <RequireAuth>
-                <Layout />
-              </RequireAuth>
-            }
-          >
-            <Route index element={<Home />} />
-            <Route path="dashboard" element={<Navigate to="/admin" replace />} />
-            <Route path="products" element={g('products', <Products />)} />
-            <Route path="products/new" element={g('products', <ProductForm />, 'create')} />
-            <Route path="products/edit/:id" element={g('products', <ProductForm />, 'edit')} />
-            <Route path="matrix" element={g('products', <Matrices />)} />
-            <Route path="matrix/new" element={g('products', <MatrixForm />, 'create')} />
-            <Route path="matrix/edit/:id" element={g('products', <MatrixForm />, 'edit')} />
-            <Route path="categories" element={g('categories', <Categories />)} />
-            <Route path="brands" element={g('categories', <Brands />)} />
-            <Route path="customers" element={g('customers', <Customers />)} />
-            <Route path="customers/:id" element={g('customers', <CustomerView />)} />
-            <Route path="vendors" element={g('receiving', <Vendors />)} />
-            <Route path="vendors/:id" element={g('receiving', <VendorView />)} />
-            <Route path="purchase-orders" element={g('receiving', <PurchaseOrders />)} />
-            <Route path="purchase-orders/new" element={g('receiving', <PurchaseOrderCreate />, 'create')} />
-            <Route path="purchase-orders/view/:id" element={g('receiving', <PurchaseOrderView />)} />
-            <Route path="receiving" element={g('receiving', <Receivings />)} />
-            <Route path="receiving/new" element={g('receiving', <ReceivingCreate />, 'create')} />
-            <Route path="receiving/view/:id" element={g('receiving', <ReceivingView />)} />
-            <Route path="returns" element={g('returns', <Returns />)} />
-            <Route path="returns/new" element={g('returns', <ReturnCreate />, 'create')} />
-            <Route path="returns/view/:id" element={g('returns', <ReturnView />)} />
-            <Route path="invoices" element={g('invoices', <Invoices />)} />
-            <Route path="invoices/create-invoice" element={g('invoices', <InvoiceCreate />, 'create')} />
-            <Route path="invoices/view/:id" element={g('invoices', <InvoiceView />)} />
+      <LanguageProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/admin/login" element={<Login />} />
             <Route
-              path="import-export"
+              path="/admin"
               element={
-                <Guard check={(can) => can('import_export') && (can('products') || can('customers'))}>
-                  <ImportExport />
-                </Guard>
+                <RequireAuth>
+                  <Layout />
+                </RequireAuth>
               }
-            />
-            <Route path="roles" element={g('roles', <Roles />)} />
-            <Route path="roles/permissions/:id" element={g('roles', <RolePermissions />)} />
-            <Route path="users" element={g('users', <Users />)} />
-            <Route path="reports" element={g('reports', <Reports />)} />
-            <Route path="settings/company-settings" element={g('settings', <CompanySettings />)} />
-            <Route path="settings/profile" element={<Profile />} />
-            <Route path="unauthorized" element={<Unauthorized />} />
+            >
+              <Route index element={<Home />} />
+              <Route path="dashboard" element={<Navigate to="/admin" replace />} />
+              <Route path="products" element={g('products', <Products />)} />
+              <Route path="products/new" element={g('products', <ProductForm />, 'create')} />
+              <Route path="products/edit/:id" element={g('products', <ProductForm />, 'edit')} />
+              <Route path="matrix" element={g('products', <Matrices />)} />
+              <Route path="matrix/new" element={g('products', <MatrixForm />, 'create')} />
+              <Route path="matrix/edit/:id" element={g('products', <MatrixForm />, 'edit')} />
+              <Route path="categories" element={g('categories', <Categories />)} />
+              <Route path="brands" element={g('categories', <Brands />)} />
+              <Route path="customers" element={g('customers', <Customers />)} />
+              <Route path="customers/:id" element={g('customers', <CustomerView />)} />
+              <Route path="vendors" element={g('receiving', <Vendors />)} />
+              <Route path="vendors/:id" element={g('receiving', <VendorView />)} />
+              <Route path="purchase-orders" element={g('receiving', <PurchaseOrders />)} />
+              <Route path="purchase-orders/new" element={g('receiving', <PurchaseOrderCreate />, 'create')} />
+              <Route path="purchase-orders/view/:id" element={g('receiving', <PurchaseOrderView />)} />
+              <Route path="receiving" element={g('receiving', <Receivings />)} />
+              <Route path="receiving/new" element={g('receiving', <ReceivingCreate />, 'create')} />
+              <Route path="receiving/view/:id" element={g('receiving', <ReceivingView />)} />
+              <Route path="returns" element={g('returns', <Returns />)} />
+              <Route path="returns/new" element={g('returns', <ReturnCreate />, 'create')} />
+              <Route path="returns/view/:id" element={g('returns', <ReturnView />)} />
+              <Route path="invoices" element={g('invoices', <Invoices />)} />
+              <Route path="invoices/create-invoice" element={g('invoices', <InvoiceCreate />, 'create')} />
+              <Route path="invoices/view/:id" element={g('invoices', <InvoiceView />)} />
+              <Route
+                path="import-export"
+                element={
+                  <Guard check={(can) => can('import_export') && (can('products') || can('customers'))}>
+                    <ImportExport />
+                  </Guard>
+                }
+              />
+              <Route path="roles" element={g('roles', <Roles />)} />
+              <Route path="roles/permissions/:id" element={g('roles', <RolePermissions />)} />
+              <Route path="users" element={g('users', <Users />)} />
+              <Route path="reports" element={g('reports', <Reports />)} />
+              <Route path="settings/company-settings" element={g('settings', <CompanySettings />)} />
+              <Route path="settings/profile" element={<Profile />} />
+              <Route path="unauthorized" element={<Unauthorized />} />
+              <Route path="*" element={<Navigate to="/admin" replace />} />
+            </Route>
             <Route path="*" element={<Navigate to="/admin" replace />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/admin" replace />} />
-        </Routes>
-      </BrowserRouter>
-      <ToastContainer position="top-right" autoClose={3000} hideProgressBar theme="light" />
+          </Routes>
+        </BrowserRouter>
+        <ToastContainer position="top-right" autoClose={3000} hideProgressBar theme="light" />
+      </LanguageProvider>
     </AuthProvider>
   );
 }

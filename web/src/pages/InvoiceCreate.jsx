@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { Banknote, Building2, CheckSquare, CirclePlus, CreditCard, FileCheck, Grid3x3, HelpCircle, Send, Smartphone, Trash2, XCircle } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, Logo } from '../auth.jsx';
+import { useI18n } from '../i18n.jsx';
 import { CancelButton, Modal, SubmitButton, useDebounced } from '../components/ui.jsx';
 import MatrixGridModal from '../components/MatrixGridModal.jsx';
 
@@ -176,6 +177,7 @@ function CustomerPicker({ onPick }) {
 }
 
 export function InvoicePaymentSection({ total, payment, setPayment, money }) {
+  const { t } = useI18n();
   const cashVal = Number(payment.cash) || 0;
   const checkVal = Number(payment.check) || Number(payment.cheque) || 0;
   const zelleVal = Number(payment.zelle) || Number(payment.bank) || 0;
@@ -219,7 +221,7 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
       {/* Header matching handwritten sketch: Payment and [Not Paid] */}
       <div className="flex items-center justify-between pb-2 border-b border-gray-100">
         <div>
-          <span className="text-base font-bold text-gray-900">Payment</span>
+          <span className="text-base font-bold text-gray-900">{t('inv.payment', 'Payment')}</span>
           <span className="text-xs text-gray-500 ml-2 hidden sm:inline">(Select method & amount)</span>
         </div>
         <button
@@ -232,7 +234,7 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
           }`}
         >
           <XCircle size={14} className={isUnpaid ? 'text-amber-700' : 'text-gray-400'} />
-          Not Paid
+          {t('inv.not_paid', 'Not Paid')}
         </button>
       </div>
 
@@ -241,14 +243,14 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
         <div className={`p-2.5 rounded-lg border transition-all ${cashVal > 0 ? 'bg-emerald-50/50 border-emerald-300 ring-1 ring-emerald-300' : 'bg-gray-50/70 border-gray-200'}`}>
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
-              <Banknote size={15} className="text-emerald-600" /> Cash
+              <Banknote size={15} className="text-emerald-600" /> {t('inv.cash', 'Cash')}
             </span>
             <button
               type="button"
               onClick={() => handleFull('cash')}
               className="text-[11px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
             >
-              Full ({money(remaining > 0 ? remaining : total)})
+              {t('inv.full', 'Full')} ({money(remaining > 0 ? remaining : total)})
             </button>
           </div>
           <div className="relative">
@@ -269,20 +271,20 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
         <div className={`p-2.5 rounded-lg border transition-all ${checkVal > 0 ? 'bg-blue-50/50 border-blue-300 ring-1 ring-blue-300' : 'bg-gray-50/70 border-gray-200'}`}>
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
-              <FileCheck size={15} className="text-blue-600" /> Check
+              <FileCheck size={15} className="text-blue-600" /> {t('inv.check', 'Check')}
             </span>
             <button
               type="button"
               onClick={() => handleFull('check')}
               className="text-[11px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
             >
-              Full ({money(remaining > 0 ? remaining : total)})
+              {t('inv.full', 'Full')} ({money(remaining > 0 ? remaining : total)})
             </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input
               type="text"
-              placeholder="Check # (optional)"
+              placeholder={t('inv.check_num', 'Check # (optional)')}
               value={payment.checkNumber || payment.chequeNumber || ''}
               onChange={(e) => setPayment((p) => ({ ...p, isNotPaid: false, checkNumber: e.target.value, chequeNumber: e.target.value }))}
               className="w-full px-2.5 py-1.5 bg-white border border-gray-300 rounded-md text-xs text-gray-900 focus:outline-none focus:ring-1 focus:ring-purple-600"
@@ -306,14 +308,14 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
         <div className={`p-2.5 rounded-lg border transition-all ${zelleVal > 0 ? 'bg-indigo-50/50 border-indigo-300 ring-1 ring-indigo-300' : 'bg-gray-50/70 border-gray-200'}`}>
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
-              <Smartphone size={15} className="text-indigo-600" /> Zelle
+              <Smartphone size={15} className="text-indigo-600" /> {t('inv.zelle', 'Zelle')}
             </span>
             <button
               type="button"
               onClick={() => handleFull('zelle')}
               className="text-[11px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
             >
-              Full ({money(remaining > 0 ? remaining : total)})
+              {t('inv.full', 'Full')} ({money(remaining > 0 ? remaining : total)})
             </button>
           </div>
           <div className="relative">
@@ -334,14 +336,14 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
         <div className={`p-2.5 rounded-lg border transition-all ${cardVal > 0 ? 'bg-violet-50/50 border-violet-300 ring-1 ring-violet-300' : 'bg-gray-50/70 border-gray-200'}`}>
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
-              <CreditCard size={15} className="text-violet-600" /> Card
+              <CreditCard size={15} className="text-violet-600" /> {t('inv.card', 'Card')}
             </span>
             <button
               type="button"
               onClick={() => handleFull('card')}
               className="text-[11px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
             >
-              Full ({money(remaining > 0 ? remaining : total)})
+              {t('inv.full', 'Full')} ({money(remaining > 0 ? remaining : total)})
             </button>
           </div>
           <div className="relative">
@@ -362,23 +364,23 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
       {/* Live Calculation Footer */}
       <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-1 text-xs">
         <div className="flex justify-between items-center">
-          <span className="text-gray-600 font-medium">Total Paid:</span>
+          <span className="text-gray-600 font-medium">{t('inv.total_paid', 'Total Paid')}:</span>
           <span className="font-bold text-emerald-700 text-sm">{money(totalPaid)}</span>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-gray-600 font-medium">Balance Due:</span>
+          <span className="text-gray-600 font-medium">{t('inv.balance_due', 'Balance Due')}:</span>
           <span className={`font-bold text-sm ${remaining > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
             {money(remaining)}
           </span>
         </div>
         {totalPaid > total && (
           <div className="flex justify-between text-xs">
-            <span className="text-gray-600">Change:</span>
+            <span className="text-gray-600">{t('inv.change', 'Change')}:</span>
             <span className="font-bold text-purple-700">{money(round2(totalPaid - total))}</span>
           </div>
         )}
         <div className="flex justify-between items-center pt-1.5 border-t border-gray-200">
-          <span className="text-gray-500 font-medium">Payment Status:</span>
+          <span className="text-gray-500 font-medium">{t('inv.status', 'Payment Status')}:</span>
           <span className={`font-bold text-xs px-2 py-0.5 rounded-full ${
             isUnpaid
               ? 'bg-amber-100 text-amber-800'
@@ -386,7 +388,7 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
               ? 'bg-emerald-100 text-emerald-800'
               : 'bg-blue-100 text-blue-800'
           }`}>
-            {isUnpaid ? 'Unpaid' : remaining === 0 ? 'Paid in Full' : 'Partial Payment'}
+            {isUnpaid ? t('inv.status_unpaid', 'Unpaid') : remaining === 0 ? t('inv.status_paid', 'Paid in Full') : t('inv.status_partial', 'Partial Payment')}
           </span>
         </div>
       </div>
@@ -714,6 +716,7 @@ export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { company, can } = useAuth();
   const money = useMoney();
+  const { t } = useI18n();
   const [number, setNumber] = useState('');
   const [payment, setPayment] = useState({
     isNotPaid: false,
@@ -911,27 +914,27 @@ export default function InvoiceCreate() {
       <form onSubmit={handleDone}>
         <div className="max-w-7xl mx-auto space-y-4 p-2">
           <div className="flex justify-between items-center mb-2">
-            <h1 className="text-2xl font-bold text-gray-950 ">New Invoice</h1>
+            <h1 className="text-2xl font-bold text-gray-950 ">{t('inv.new_invoice', 'New Invoice')}</h1>
             <Logo kind="invoice" alt="" />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 w-full">
             <div>
-              <label className="block text-sm font-medium text-gray-900">Invoice Number</label>
+              <label className="block text-sm font-medium text-gray-900">{t('inv.invoice_number', 'Invoice Number')}</label>
               <input readOnly value={number} className={`${fieldCls} mt-1 bg-gray-50`} title="Assigned automatically when saved" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">
-                Invoice Date <span className="text-red-500">*</span>
+                {t('inv.invoice_date', 'Invoice Date')} <span className="text-red-500">*</span>
               </label>
               <input type="date" required value={form.invoiceDate} onChange={set('invoiceDate')} className={`${fieldCls} mt-1`} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Due Date</label>
+              <label className="block text-sm font-medium text-gray-700">{t('inv.due_date', 'Due Date')}</label>
               <input type="date" min={form.invoiceDate} value={form.dueDate} onChange={set('dueDate')} className={`${fieldCls} mt-1`} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">
-                Price Level <span className="text-red-500">*</span>
+                {t('inv.price_level', 'Price Level')} <span className="text-red-500">*</span>
               </label>
               <select value={form.priceLevel} onChange={(e) => changeLevel(e.target.value)} className={`${fieldCls} mt-1 bg-white`}>
                 {LEVELS.map((l) => (
@@ -944,11 +947,11 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="bg-white p-4 rounded-lg border border-gray-200 flex flex-wrap items-center gap-4">
-            <label className="text-sm font-medium text-gray-700">Payment Status</label>
+            <label className="text-sm font-medium text-gray-700">{t('inv.status', 'Payment Status')}</label>
             {['unpaid', 'paid'].map((s) => (
               <label key={s} className="flex items-center cursor-pointer">
                 <input type="radio" name="status" value={s} checked={form.status === s} onChange={set('status')} className="h-4 w-4 accent-purple-600" />
-                <span className="ml-2 text-sm text-gray-700 capitalize">{s}</span>
+                <span className="ml-2 text-sm text-gray-700 capitalize">{s === 'unpaid' ? t('inv.status_unpaid', 'Unpaid') : t('inv.status_paid', 'Paid in Full')}</span>
               </label>
             ))}
           </div>
@@ -995,12 +998,12 @@ export default function InvoiceCreate() {
               <table className="w-full text-sm min-w-[760px]">
                 <thead>
                   <tr className="bg-black text-white text-left">
-                    <th className="px-3 py-3 rounded-l-md w-64">Item</th>
-                    <th className="px-3 py-3">Description</th>
-                    <th className="px-3 py-3 w-24">Quantity</th>
-                    <th className="px-3 py-3 w-32">Price ($)</th>
-                    <th className="px-3 py-3 w-32 text-right">Total</th>
-                    <th className="px-3 py-3 w-16 rounded-r-md">Action</th>
+                    <th className="px-3 py-3 rounded-l-md w-64">{t('inv.item', 'Item')}</th>
+                    <th className="px-3 py-3">{t('inv.description', 'Description')}</th>
+                    <th className="px-3 py-3 w-24">{t('inv.quantity', 'Quantity')}</th>
+                    <th className="px-3 py-3 w-32">{t('inv.price', 'Price ($)')}</th>
+                    <th className="px-3 py-3 w-32 text-right">{t('inv.total', 'Total')}</th>
+                    <th className="px-3 py-3 w-16 rounded-r-md">{t('action.actions', 'Action')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1014,7 +1017,7 @@ export default function InvoiceCreate() {
                         />
                         {l.product && (
                           <p className={`text-xs mt-1 ${Number(l.quantity) > l.product.quantity ? (allowOversell ? 'text-amber-700' : 'text-red-600') : 'text-gray-500'}`}>
-                            {l.product.quantity} in stock
+                            {l.product.quantity} {t('prod.in_stock', 'in stock')}
                             {Number(l.quantity) > l.product.quantity && (allowOversell ? ' · selling more than in stock' : ' · not enough stock')}
                           </p>
                         )}
@@ -1023,7 +1026,7 @@ export default function InvoiceCreate() {
                         <textarea
                           rows={1}
                           maxLength={1000}
-                          placeholder="Description"
+                          placeholder={t('inv.description', 'Description')}
                           value={l.description}
                           onChange={(e) => setRow(l.key, { description: e.target.value })}
                           className="p-2 min-h-10 w-full border text-gray-700 text-sm border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-600 focus:border-purple-600"
@@ -1062,15 +1065,15 @@ export default function InvoiceCreate() {
             </div>
             {errors.items && <p className="text-xs text-red-600 px-3">{errors.items}</p>}
             <button type="button" onClick={() => setRows((rs) => [...rs, newRow()])} className="flex items-center gap-1 text-sm text-purple-600 font-semibold mt-3 px-3 cursor-pointer">
-              <CirclePlus size={16} /> Add New Row
+              <CirclePlus size={16} /> {t('action.add_row', 'Add New Row')}
             </button>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
             <div className="lg:col-span-5 space-y-4">
               <div>
-                <h2 className="text-xl font-bold text-gray-950 mb-2">Extra Information</h2>
-                <label className="block text-sm font-medium text-gray-700">Additional Notes</label>
+                <h2 className="text-xl font-bold text-gray-950 mb-2">{t('inv.extra_info', 'Extra Information')}</h2>
+                <label className="block text-sm font-medium text-gray-700">{t('inv.notes', 'Additional Notes')}</label>
                 <textarea
                   rows={4}
                   maxLength={5000}
@@ -1083,7 +1086,7 @@ export default function InvoiceCreate() {
 
               {/* Total Card */}
               <div className="bg-gradient-to-br from-purple-50 to-white p-4 rounded-xl border border-purple-200 shadow-2xs">
-                <p className="text-xs font-bold uppercase tracking-wider text-purple-700 mb-1">Invoice Total Amount</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-purple-700 mb-1">{t('inv.invoice_total', 'Invoice Total')}</p>
                 <p className="text-3xl font-extrabold text-gray-950 tracking-tight">{money(total)}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   {lines.filter((l) => l.product).length} item(s) · Subtotal {money(subtotal)}
@@ -1103,14 +1106,14 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="flex justify-end items-center gap-3 pt-3 border-t border-gray-200">
-            <CancelButton onClick={() => navigate('/admin/invoices')} />
+            <CancelButton onClick={() => navigate('/admin/invoices')} label={t('action.cancel', 'Cancel')} />
             <button
               type="button"
               disabled={saving}
               onClick={handleSaveUnpaid}
               className="px-4 py-2.5 text-sm font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg shadow-2xs cursor-pointer transition-colors"
             >
-              Save as Unpaid
+              {t('inv.save_unpaid', 'Save as Unpaid')}
             </button>
             <button
               type="button"
@@ -1118,7 +1121,7 @@ export default function InvoiceCreate() {
               onClick={handleDone}
               className="px-8 py-2.5 text-base font-bold text-white bg-purple-600 hover:bg-purple-700 active:bg-gray-950 rounded-lg shadow-md cursor-pointer transition-colors flex items-center gap-2"
             >
-              {saving ? 'Saving...' : 'Done'}
+              {saving ? t('action.saving', 'Saving...') : t('action.done', 'Done')}
             </button>
           </div>
         </div>
