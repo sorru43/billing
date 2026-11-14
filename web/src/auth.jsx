@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, setUnauthorizedHandler } from './api.js';
+import { useI18n } from './i18n.jsx';
 
 const AuthContext = createContext(null);
 
@@ -55,17 +56,28 @@ export function AuthProvider({ children }) {
 export const useAuth = () => useContext(AuthContext);
 
 export function useMoney() {
-  const { company } = useAuth();
-  const sym = '$';
+  const { lang } = useI18n();
   return useCallback(
-    (n, decimals = 2) =>
-      `${sym}${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`,
-    [sym],
+    (n, decimals = 2) => {
+      const num = Number(n || 0);
+      const formatted = num.toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      });
+      return lang === 'fr' ? `${formatted} €` : `$${formatted}`;
+    },
+    [lang],
   );
 }
 
-export const formatDate = (d) =>
-  d ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00` : d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+export const formatDate = (d, explicitLang) => {
+  if (!d) return '-';
+  const lang = explicitLang || (typeof window !== 'undefined' ? localStorage.getItem('billing_lang') : 'en') || 'en';
+  return new Date(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00` : d).toLocaleDateString(
+    lang === 'fr' ? 'fr-FR' : 'en-GB',
+    { day: '2-digit', month: 'short', year: 'numeric' },
+  );
+};
 
 // Custom logo if one is uploaded, else the bundled Wise logo.
 export const logoUrl = (kind, v) => (v ? `/api/branding/logo/${kind}?v=${v}` : '/static/wise-logo.svg');

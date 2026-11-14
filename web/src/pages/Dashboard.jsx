@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { Box, Calendar, CircleAlert, Clock, FolderTree, KeyRound, PackageX, ReceiptText, Users, Wallet } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
+import { useI18n } from '../i18n.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
 
 function Stat({ icon, label, value, tone = 'purple' }) {
@@ -40,33 +41,34 @@ function Card({ title, icon, children }) {
 export default function Dashboard() {
   const { user, can } = useAuth();
   const money = useMoney();
+  const { t, lang } = useI18n();
   const [data, setData] = useState(null);
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
     api.get('/dashboard').then((r) => setData(r.data)).catch(() => setData({}));
-    const t = setInterval(() => setNow(new Date()), 30000);
-    return () => clearInterval(t);
+    const tTimer = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(tTimer);
   }, []);
 
   const hour = now.getHours();
-  const greeting = hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening';
+  const greeting = hour < 12 ? t('dash.morning', 'Good Morning') : hour < 17 ? t('dash.afternoon', 'Good Afternoon') : t('dash.evening', 'Good Evening');
 
   return (
     <div className="p-4 bg-white border border-gray-200 rounded-lg space-y-4">
-      <h1 className="text-2xl font-bold text-gray-600">Dashboard</h1>
+      <h1 className="text-2xl font-bold text-gray-600">{t('dash.dashboard', 'Dashboard')}</h1>
       <div className="bg-purple-600 text-white rounded-lg p-4 flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold">
             {greeting}, {user?.firstName} {user?.lastName}
           </h2>
-          <p className="mt-1">Welcome back! Stay on top of your products and invoices today.</p>
+          <p className="mt-1">{t('dash.welcome', 'Welcome back! Stay on top of your products and invoices today.')}</p>
           <div className="flex items-center gap-4 mt-3 text-sm">
             <span className="flex items-center gap-1">
-              <Calendar size={16} /> {now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+              <Calendar size={16} /> {now.toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
             </span>
             <span className="flex items-center gap-1">
-              <Clock size={16} /> {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+              <Clock size={16} /> {now.toLocaleTimeString(lang === 'fr' ? 'fr-FR' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
         </div>
@@ -76,7 +78,7 @@ export default function Dashboard() {
             to="/admin/settings/profile#change-login"
             className="flex items-center gap-2 bg-white text-purple-600 font-semibold text-sm px-3 py-2 rounded-lg hover:bg-gray-100 transition whitespace-nowrap"
           >
-            <KeyRound size={16} /> Change Login
+            <KeyRound size={16} /> {t('dash.change_login', 'Change Login')}
           </Link>
         </div>
       </div>
@@ -87,40 +89,39 @@ export default function Dashboard() {
         <>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {data.products && (
-              <Card title="Inventory" icon={<Box size={20} />}>
-                <Stat icon={<Box size={18} />} label="Products" value={data.products.total} />
-                {data.categories !== undefined && <Stat icon={<FolderTree size={18} />} label="Categories" value={data.categories} tone="green" />}
-                <Stat icon={<CircleAlert size={18} />} label="Low Stock" value={data.products.low_stock} tone="yellow" />
-                <Stat icon={<PackageX size={18} />} label="Out of Stock" value={data.products.out_of_stock} tone="red" />
+              <Card title={t('dash.inventory', 'Inventory')} icon={<Box size={20} />}>
+                <Stat icon={<Box size={18} />} label={t('dash.products', 'Products')} value={data.products.total} />
+                {data.categories !== undefined && <Stat icon={<FolderTree size={18} />} label={t('dash.categories', 'Categories')} value={data.categories} tone="green" />}
+                <Stat icon={<CircleAlert size={18} />} label={t('dash.low_stock', 'Low Stock')} value={data.products.low_stock} tone="yellow" />
+                <Stat icon={<PackageX size={18} />} label={t('dash.out_of_stock', 'Out of Stock')} value={data.products.out_of_stock} tone="red" />
               </Card>
             )}
             {data.invoices && (
-              <Card title="Sales (live invoices)" icon={<ReceiptText size={20} />}>
-                <Stat icon={<ReceiptText size={18} />} label="Invoices" value={data.invoices.total} />
-                <Stat icon={<Wallet size={18} />} label="Total Sales" value={money(data.invoices.amount, 0)} tone="green" />
-                <Stat icon={<Wallet size={18} />} label="Paid Amount" value={money(data.invoices.paid, 0)} tone="blue" />
-                <Stat icon={<CircleAlert size={18} />} label="Amount Due" value={money(data.invoices.amount - data.invoices.paid, 0)} tone="red" />
+              <Card title={t('dash.sales', 'Sales (live invoices)')} icon={<ReceiptText size={20} />}>
+                <Stat icon={<ReceiptText size={18} />} label={t('dash.invoices', 'Invoices')} value={data.invoices.total} />
+                <Stat icon={<Wallet size={18} />} label={t('dash.total_sales', 'Total Sales')} value={money(data.invoices.amount, 0)} tone="green" />
+                <Stat icon={<Wallet size={18} />} label={t('dash.paid_amount', 'Paid Amount')} value={money(data.invoices.paid, 0)} tone="blue" />
+                <Stat icon={<CircleAlert size={18} />} label={t('dash.amount_due', 'Amount Due')} value={money(data.invoices.amount - data.invoices.paid, 0)} tone="red" />
               </Card>
             )}
             {(data.products || data.users !== undefined) && (
-              <Card title="Overview" icon={<Users size={20} />}>
-                {data.products && <Stat icon={<Wallet size={18} />} label="Stock Value (Cost)" value={money(data.products.stock_value, 0)} />}
-                {data.users !== undefined && <Stat icon={<Users size={18} />} label="Staff Users" value={data.users} tone="blue" />}
+              <Card title={t('dash.overview', 'Overview')} icon={<Users size={20} />}>
+                {data.products && <Stat icon={<Wallet size={18} />} label={t('dash.stock_value', 'Stock Value (Cost)')} value={money(data.products.stock_value, 0)} />}
+                {data.users !== undefined && <Stat icon={<Users size={18} />} label={t('dash.staff_users', 'Staff Users')} value={data.users} tone="blue" />}
               </Card>
             )}
           </div>
-
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {data.recentInvoices && (
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
                 <div className="flex justify-between items-center mb-3">
-                  <h2 className="text-lg font-bold text-gray-950">Recent Invoices</h2>
+                  <h2 className="text-lg font-bold text-gray-950">{t('dash.recent_invoices', 'Recent Invoices')}</h2>
                   <Link to="/admin/invoices" className="text-sm text-purple-600 font-medium">
-                    View all →
+                    {t('dash.view_all', 'View all →')}
                   </Link>
                 </div>
-                {data.recentInvoices.length === 0 && <p className="text-sm text-gray-500">No invoices yet.</p>}
+                {data.recentInvoices.length === 0 && <p className="text-sm text-gray-500">{t('dash.no_invoices', 'No invoices yet.')}</p>}
                 {data.recentInvoices.map((i) => (
                   <Link key={i.id} to={`/admin/invoices/view/${i.id}`} className="flex justify-between items-center py-2 border-b border-gray-100 text-sm hover:bg-gray-50">
                     <span>
@@ -137,23 +138,23 @@ export default function Dashboard() {
             {data.lowStock && can('products') && (
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
                 <div className="flex justify-between items-center mb-3">
-                  <h2 className="text-lg font-bold text-gray-950">Low Stock</h2>
+                  <h2 className="text-lg font-bold text-gray-950">{t('dash.low_stock', 'Low Stock')}</h2>
                   <span className="flex gap-3">
                     {can('receiving', 'create') && (
                       <Link to="/admin/purchase-orders/new?lowStock=1" className="text-sm text-purple-600 font-medium">
-                        Order now →
+                        {t('dash.order_now', 'Order now →')}
                       </Link>
                     )}
                     <Link to="/admin/products" className="text-sm text-purple-600 font-medium">
-                      View all →
+                      {t('dash.view_all', 'View all →')}
                     </Link>
                   </span>
                 </div>
-                {data.lowStock.length === 0 && <p className="text-sm text-gray-500">All products are well stocked.</p>}
+                {data.lowStock.length === 0 && <p className="text-sm text-gray-500">{t('dash.well_stocked', 'All products are well stocked.')}</p>}
                 {data.lowStock.map((p) => (
                   <div key={p.id} className="flex justify-between py-2 border-b border-gray-100 text-sm">
                     <span className="text-gray-950">{p.name}</span>
-                    <span className={`font-semibold ${p.quantity <= 0 ? 'text-red-600' : 'text-yellow-700'}`}>{p.quantity} left <span className="text-xs font-normal text-gray-400">(alert at {p.alert_level})</span></span>
+                    <span className={`font-semibold ${p.quantity <= 0 ? 'text-red-600' : 'text-yellow-700'}`}>{p.quantity} {t('dash.left', 'left')} <span className="text-xs font-normal text-gray-400">({t('dash.alert_at', 'alert at')} {p.alert_level})</span></span>
                   </div>
                 ))}
               </div>

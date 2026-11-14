@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, CirclePlus, EllipsisVertical, LoaderCircle, Save, TriangleAlert, X } from 'lucide-react';
+import { useI18n } from '../i18n.jsx';
 
 // Classes below are copied from the original finance app so the replica looks identical.
 
@@ -381,11 +382,15 @@ const STATUS = {
   received: 'bg-emerald-100 text-emerald-700',
   cancelled: 'bg-gray-100 text-gray-500 line-through',
 };
-export const StatusBadge = ({ status }) => (
-  <span className={`inline-flex items-center px-2 py-1 rounded-sm text-xs font-medium capitalize ${STATUS[status] || 'bg-gray-100 text-gray-700'}`}>
-    {status}
-  </span>
-);
+export const StatusBadge = ({ status }) => {
+  const { t } = useI18n();
+  const label = status ? t(`status.${String(status).toLowerCase()}`, status) : '';
+  return (
+    <span className={`inline-flex items-center px-2 py-1 rounded-sm text-xs font-medium capitalize ${STATUS[status] || 'bg-gray-100 text-gray-700'}`}>
+      {label}
+    </span>
+  );
+};
 
 // Debounced value for search boxes.
 export function useDebounced(value, ms = 300) {
