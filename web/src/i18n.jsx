@@ -264,6 +264,12 @@ export const translations = {
   },
 };
 
+export function isShowcaseHost() {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname.toLowerCase();
+  return host === 'billing.wise-hustlers.com' || host === 'localhost' || host === '127.0.0.1';
+}
+
 const LanguageContext = createContext(null);
 
 export function LanguageProvider({ children }) {
@@ -290,6 +296,7 @@ export function LanguageProvider({ children }) {
   }, [lang]);
 
   const t = (key, fallback) => {
+    if (!isShowcaseHost()) return fallback ?? key;
     return translations[lang]?.[key] ?? translations['en']?.[key] ?? fallback ?? key;
   };
 
@@ -314,6 +321,7 @@ export function useI18n() {
 }
 
 export function LanguageSelector({ className = '' }) {
+  if (!isShowcaseHost()) return null;
   const { lang, setLang, languages } = useI18n();
   const [open, setOpen] = useState(false);
   const current = languages.find((l) => l.code === lang) || languages[0];
