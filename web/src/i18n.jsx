@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
+import { Check, ChevronDown, Globe } from 'lucide-react';
 
 export const LANGUAGES = [
   { code: 'en', label: 'English', flag: '🇺🇸' },
@@ -172,6 +173,15 @@ export const translations = {
     'status.open': 'Open',
     'status.received': 'Received',
     'status.cancelled': 'Cancelled',
+
+    // Login
+    'login.welcome': 'Welcome Back',
+    'login.signin_desc': 'Sign in to access the dashboard',
+    'login.email': 'Email Address',
+    'login.password': 'Password',
+    'login.remember': 'Remember me',
+    'login.button': 'Login',
+    'login.logging_in': 'Logging in...',
   },
   fr: {
     // Navigation & Main
@@ -339,6 +349,15 @@ export const translations = {
     'status.open': 'Ouvert',
     'status.received': 'Reçu',
     'status.cancelled': 'Annulé',
+
+    // Login
+    'login.welcome': 'Bienvenue',
+    'login.signin_desc': 'Connectez-vous pour accéder au tableau de bord',
+    'login.email': 'Adresse email',
+    'login.password': 'Mot de passe',
+    'login.remember': 'Se souvenir de moi',
+    'login.button': 'Connexion',
+    'login.logging_in': 'Connexion en cours...',
   },
 };
 
@@ -409,40 +428,51 @@ export function LanguageSelector({ className = '' }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 transition cursor-pointer shadow-2xs"
+        aria-expanded={open}
+        aria-label="Select language"
+        className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 shadow-xs hover:border-gray-300 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/20"
         title="Change language / Changer de langue"
       >
-        <span className="text-sm">{current.flag}</span>
-        <span className="hidden sm:inline">{current.label}</span>
-        <span className="sm:hidden uppercase">{current.code}</span>
+        <span className="text-base leading-none select-none">{current.flag}</span>
+        <span className="font-medium text-gray-800">{current.label}</span>
+        <ChevronDown size={14} className={`text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className="absolute right-0 mt-1.5 w-36 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
+            className="absolute right-0 mt-2 w-44 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-150 divide-y divide-gray-50"
             onMouseLeave={() => setOpen(false)}
           >
-            {languages.map((item) => (
-              <button
-                key={item.code}
-                type="button"
-                onClick={() => {
-                  setLang(item.code);
-                  setOpen(false);
-                }}
-                className={`flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left cursor-pointer transition ${
-                  lang === item.code
-                    ? 'bg-purple-50 text-purple-700 font-bold'
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                <span className="text-base">{item.flag}</span>
-                <span>{item.label}</span>
-                {lang === item.code && <span className="ml-auto text-purple-600 font-bold">✓</span>}
-              </button>
-            ))}
+            <div className="px-3 py-1.5 text-[11px] font-medium text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Globe size={12} className="text-gray-400" />
+              <span>Language / Langue</span>
+            </div>
+            <div className="py-1">
+              {languages.map((item) => {
+                const isSelected = lang === item.code;
+                return (
+                  <button
+                    key={item.code}
+                    type="button"
+                    onClick={() => {
+                      setLang(item.code);
+                      setOpen(false);
+                    }}
+                    className={`flex items-center gap-2.5 w-full px-3 py-2 text-xs text-left cursor-pointer transition-colors ${
+                      isSelected
+                        ? 'bg-purple-50/80 text-purple-700 font-bold'
+                        : 'text-gray-700 hover:bg-gray-50 hover:text-gray-950 font-normal'
+                    }`}
+                  >
+                    <span className="text-base leading-none select-none">{item.flag}</span>
+                    <span className="flex-1">{item.label}</span>
+                    {isSelected && <Check size={14} className="text-purple-600 stroke-[2.5]" />}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </>
       )}
