@@ -99,7 +99,7 @@ app.use((err, req, res, next) => {
 
 app.listen(config.port, '127.0.0.1', () => {
   console.log(`billing listening on 127.0.0.1:${config.port}`);
-  // Every 5 minutes: email invoices older than the retention window to the archive address, then delete them.
+  // Every 5 minutes: email invoices paid more than the retention window ago to the archive address, then delete them.
   purgeExpiredInvoices();
   setInterval(purgeExpiredInvoices, 5 * 60 * 1000).unref();
 });

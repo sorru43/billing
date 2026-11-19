@@ -6,7 +6,7 @@ import { config } from '../config.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 import { getSetting } from '../settings.js';
 import { invoicePdf } from '../pdf.js';
-import { invoiceEmail } from '../archive.js';
+import { invoiceEmail, startRetentionWindow } from '../archive.js';
 import { receiveCustomerPayment, useCustomerCredit } from '../balance.js';
 
 const r = Router();
@@ -213,6 +213,8 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
     const initialStatus = initialPaid >= total && total > 0 ? 'paid' : initialPaid > 0 ? 'partial' : 'unpaid';
 
     const number = await nextNumber(client, false);
+    // expires_at starts the retention window now; it only matters once the invoice is paid,
+    // and it is restarted (startRetentionWindow) at the moment an unpaid invoice becomes paid.
     let { rows } = await client.query(
       `INSERT INTO invoices (invoice_number, invoice_date, due_date, customer_name, customer_email, customer_phone, customer_address,
                              price_level, items, subtotal, discount_total, tax_total, total, paid_amount, notes, status, created_by, expires_at, customer_id)
@@ -320,6 +322,7 @@ r.patch('/:id/status', requirePerm('invoices', 'edit'), h(async (req, res) => {
   const newStatus = newPaid >= total ? 'paid' : 'partial';
   await query(`UPDATE invoices SET status=$1, paid_amount=$2 WHERE id=$3`, [newStatus, newPaid, inv.id]);
   await query(`UPDATE customer_sales_records SET status=$1, paid_amount=$2 WHERE invoice_id=$3`, [newStatus, newPaid, inv.id]);
+  if (newStatus === 'paid') await startRetentionWindow({ query }, inv.id);
   const pSeq = (await query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
   await query(
     `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, reference, notes, created_by)

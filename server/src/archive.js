@@ -5,6 +5,16 @@ import { invoicePdf } from './pdf.js';
 import { sendMail, escapeHtml } from './mailer.js';
 
 const fmt = (sym, n) => `${sym}${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const hoursText = (h) => `${h} hour${h === 1 ? '' : 's'}`;
+
+// The retention window counts from the moment an invoice becomes fully paid, so an invoice
+// paid days after it was made can still be reprinted or emailed before it is archived.
+// Call this whenever an invoice's status changes to 'paid'. `db` is a pg client or { query }.
+export const startRetentionWindow = (db, invoiceId) =>
+  db.query(`UPDATE invoices SET expires_at = now() + make_interval(hours => $1) WHERE id = $2`, [
+    config.invoiceRetentionHours,
+    invoiceId,
+  ]);
 
 export async function invoiceEmail(inv, to, { archive }) {
   const company = await getSetting('company');
@@ -14,7 +24,7 @@ export async function invoiceEmail(inv, to, { archive }) {
     ? `[Archive] Invoice ${inv.invoice_number} – ${inv.customer_name}`
     : `Invoice ${inv.invoice_number} from ${company.companyName || 'us'}`;
   const intro = archive
-    ? `This invoice reached the end of its ${inv.retentionHours ?? 48}-hour retention window and has been removed from the billing app. This email is now the only copy.`
+    ? `This invoice was paid in full more than ${hoursText(config.invoiceRetentionHours)} ago and has been removed from the billing app. This email is now the only copy.`
     : `Please find your invoice attached.`;
   await sendMail({
     to,
@@ -59,8 +69,8 @@ export async function archiveAndDelete(id) {
   return { ok: true };
 }
 
-// When an invoice's retention window ends it is emailed to ARCHIVE_EMAIL and
-// then deleted. If the email fails it is kept and retried on the next run.
+// When a paid invoice's retention window ends (INVOICE_RETENTION_HOURS after it was paid) it is
+// emailed to ARCHIVE_EMAIL and then deleted. If the email fails it is kept and retried on the next run.
 let running = false;
 export async function purgeExpiredInvoices() {
   if (running) return;

@@ -7,6 +7,8 @@
 //
 // Every function takes a pg client that is already inside a transaction.
 
+import { startRetentionWindow } from './archive.js';
+
 export const round2 = (n) => Math.round(Number(n) * 100) / 100;
 
 const SIDES = {
@@ -16,9 +18,12 @@ const SIDES = {
     ownerCol: 'customer_id',
     order: 'invoice_date ASC, created_at ASC',
     number: 'invoice_number',
-    // invoices also mirror into the permanent sales ledger
-    after: (client, id, paid, status) =>
-      client.query(`UPDATE customer_sales_records SET paid_amount = $1, status = $2 WHERE invoice_id = $3`, [paid, status, id]),
+    // invoices also mirror into the permanent sales ledger, and a fully paid invoice
+    // starts its retention window (archived and deleted when it ends) from now
+    after: async (client, id, paid, status) => {
+      await client.query(`UPDATE customer_sales_records SET paid_amount = $1, status = $2 WHERE invoice_id = $3`, [paid, status, id]);
+      if (status === 'paid') await startRetentionWindow(client, id);
+    },
   },
   vendor: {
     owner: 'vendors',

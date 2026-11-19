@@ -17,7 +17,8 @@ export const config = {
   // Lets the old and new domains both work during a domain move.
   allowedOrigins: (process.env.ALLOWED_ORIGINS || process.env.PUBLIC_ORIGIN || 'http://localhost:3710')
     .split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean),
-  // Invoices are kept this long, then emailed to ARCHIVE_EMAIL and deleted.
+  // Paid invoices are kept this long after they are paid in full, then emailed to ARCHIVE_EMAIL and
+  // deleted. Unpaid and part-paid invoices are never deleted.
   invoiceRetentionHours: Number(process.env.INVOICE_RETENTION_HOURS || 48),
   archiveEmail: (process.env.ARCHIVE_EMAIL || '').trim().toLowerCase(),
   smtpDefaults: {
