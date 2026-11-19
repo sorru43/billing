@@ -35,15 +35,8 @@ export default function BarcodeLookupModal({ isOpen, onClose }) {
     try {
       const res = await api.get(`/products/lookup-barcode?barcode=${encodeURIComponent(code)}`);
       setResult(res.data);
-      if (!res.data.found) {
-        toast.info(res.data.message || 'Product not found in Barcode Lookup database');
-      }
     } catch (err) {
-      if (err.errors?.code === 'NO_API_KEY') {
-        setError('Barcode Lookup API key is not configured. Please set it up in Company Settings.');
-      } else {
-        setError(err.message || 'Lookup failed');
-      }
+      setError(err.message || 'Lookup failed');
     } finally {
       setLoading(false);
     }
@@ -60,6 +53,7 @@ export default function BarcodeLookupModal({ isOpen, onClose }) {
           description: p?.description || (p?.brand ? `Brand: ${p.brand}` : ''),
           category_id: result?.matchedCategory?.id || '',
           image: p?.image || '',
+          source: result?.source || '',
         },
       },
     });
@@ -143,12 +137,21 @@ export default function BarcodeLookupModal({ isOpen, onClose }) {
                       ✓ Matched in your categories: {result.matchedCategory.name}
                     </p>
                   )}
+                  {result.source && (
+                    <p className="text-[11px] text-gray-400">
+                      Found via {result.source}
+                      {result.cached ? ' (saved result, no lookup used)' : ''}
+                    </p>
+                  )}
                 </div>
               </div>
             ) : (
               <div className="text-xs text-gray-600">
-                <p className="font-semibold text-gray-800">No match found on Barcode Lookup for &ldquo;{barcode}&rdquo;</p>
+                <p className="font-semibold text-gray-800">No match found for &ldquo;{barcode}&rdquo;</p>
                 <p className="mt-0.5 text-gray-500">You can still create a new product and assign this barcode manually.</p>
+                {result.warnings?.length > 0 && (
+                  <p className="mt-1 text-amber-700">Some sources could not be checked: {result.warnings.join(' ')}</p>
+                )}
               </div>
             )}
 

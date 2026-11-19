@@ -6,7 +6,8 @@ import express from 'express';
 import PDFDocument from 'pdfkit';
 import { getSetting, setSetting } from '../settings.js';
 import { LOGO_KINDS, LOGO_MAX_BYTES, LOGO_TYPES, sniffImage, saveLogo, deleteLogo } from '../logos.js';
-import { getBarcodeApiKey, maskApiKey, testBarcodeApiKey } from '../barcodeLookup.js';
+import { getLookupSettings, saveLookupSettings, testLookupSource } from '../barcodeLookup.js';
+import { SOURCES } from '../barcodeProviders.js';
 
 const r = Router();
 
@@ -74,30 +75,30 @@ r.delete('/logo/:kind', requirePerm('settings', 'edit'), h(async (req, res) => {
   ok(res, null, 'Logo reset to default');
 }));
 
-// Barcode Lookup API Settings (barcodelookup.com)
+// Barcode lookup sources (free first, paid only when the free ones miss). Keys are returned masked.
 r.get('/barcode-lookup', requirePerm('settings', 'view'), h(async (req, res) => {
-  const key = await getBarcodeApiKey();
-  ok(res, {
-    apiKey: maskApiKey(key),
-    hasKey: Boolean(key),
-  });
+  ok(res, await getLookupSettings());
 }));
 
+const sourceIds = SOURCES.map((s) => s.id);
+const sourceSchema = z.object({ enabled: z.boolean().optional(), apiKey: z.string().max(200).optional() });
+const lookupSettingsSchema = z.object({
+  sources: z.object(Object.fromEntries(sourceIds.map((id) => [id, sourceSchema.optional()]))),
+});
+
 r.put('/barcode-lookup', requirePerm('settings', 'edit'), h(async (req, res) => {
-  const apiKey = String(req.body?.apiKey || '').trim();
-  await setSetting('barcode_lookup', { apiKey });
-  ok(res, {
-    apiKey: maskApiKey(apiKey),
-    hasKey: Boolean(apiKey),
-  }, apiKey ? 'Barcode Lookup API key saved' : 'Barcode Lookup API key cleared');
+  const b = validate(lookupSettingsSchema, req.body, res);
+  if (!b) return;
+  await saveLookupSettings(b.sources);
+  ok(res, await getLookupSettings(), 'Barcode lookup settings saved');
 }));
 
 r.post('/barcode-lookup/test', requirePerm('settings', 'view'), h(async (req, res) => {
-  const apiKey = req.body?.apiKey ? String(req.body.apiKey).trim() : null;
-  const result = await testBarcodeApiKey(apiKey);
-  if (!result.ok) {
-    return fail(res, 400, result.error || 'Failed to connect to Barcode Lookup API');
-  }
+  const source = String(req.body?.source || '');
+  if (!sourceIds.includes(source)) return fail(res, 422, 'Unknown lookup source');
+  const apiKey = req.body?.apiKey ? String(req.body.apiKey).slice(0, 200) : null;
+  const result = await testLookupSource(source, apiKey);
+  if (!result.ok) return fail(res, 400, result.error || 'Lookup source test failed');
   ok(res, result, result.message);
 }));
 

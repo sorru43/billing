@@ -337,6 +337,17 @@ CREATE TABLE IF NOT EXISTS settings (
   key    text PRIMARY KEY,
   value  jsonb NOT NULL
 );
+
+-- Saved barcode lookups, so each barcode is fetched (and paid for) only once.
+-- "tried" lists the sources that already said "not found", so a newly added source still gets asked.
+CREATE TABLE IF NOT EXISTS barcode_lookups (
+  barcode       text PRIMARY KEY,
+  found         boolean NOT NULL,
+  source        text NOT NULL DEFAULT '',
+  product       jsonb,
+  tried         text[] NOT NULL DEFAULT '{}',
+  looked_up_at  timestamptz NOT NULL DEFAULT now()
+);
 `;
 
 async function main() {

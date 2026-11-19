@@ -133,106 +133,137 @@ function InventorySettings({ editable }) {
   );
 }
 
+// Barcode lookup sources: asked in order, free first, paid ones only when the free ones miss.
 function BarcodeLookupSettings({ editable }) {
-  const [apiKey, setApiKey] = useState('');
-  const [hasKey, setHasKey] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [data, setData] = useState(null);
+  const [edits, setEdits] = useState({});
+  const [testing, setTesting] = useState('');
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
+
+  const load = (d) => {
+    setData(d);
+    setEdits(Object.fromEntries(d.sources.map((s) => [s.id, { enabled: s.enabled, apiKey: s.apiKey }])));
+  };
 
   useEffect(() => {
-    api
-      .get('/settings/barcode-lookup')
-      .then((r) => {
-        setHasKey(r.data.hasKey);
-        if (r.data.apiKey) setApiKey(r.data.apiKey);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    api.get('/settings/barcode-lookup').then((r) => load(r.data)).catch((e) => toast.error(e.message));
   }, []);
+
+  const edit = (id, patch) => setEdits((all) => ({ ...all, [id]: { ...all[id], ...patch } }));
 
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put('/settings/barcode-lookup', { apiKey });
-      setHasKey(r.data.hasKey);
-      setApiKey(r.data.apiKey || '');
-      toast.success(r.message || 'Barcode Lookup API key saved');
+      const r = await api.put('/settings/barcode-lookup', { sources: edits });
+      load(r.data);
+      toast.success(r.message);
     } catch (e) {
-      toast.error(e.message || 'Failed to save API key');
+      toast.error(e.message || 'Failed to save barcode lookup settings');
     } finally {
       setSaving(false);
     }
   };
 
-  const testKey = async () => {
-    setTesting(true);
+  const test = async (id) => {
+    setTesting(id);
     try {
-      const r = await api.post('/settings/barcode-lookup/test', { apiKey });
-      toast.success(r.data?.message || 'Connection successful! Barcode Lookup API is working.');
+      const r = await api.post('/settings/barcode-lookup/test', { source: id, apiKey: edits[id]?.apiKey || '' });
+      toast.success(r.message);
     } catch (e) {
-      toast.error(e.message || 'Test failed. Please check the API key.');
+      toast.error(e.message || 'Test failed');
     } finally {
-      setTesting(false);
+      setTesting('');
     }
   };
 
   return (
     <div className="bg-white p-6 rounded-lg border border-gray-200 space-y-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-xl font-bold text-gray-950">Barcode Lookup API</h3>
-            {hasKey && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                Connected
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-gray-500 mt-1">
-            Connect your <a href="https://www.barcodelookup.com/api" target="_blank" rel="noreferrer" className="text-purple-600 underline font-medium hover:text-purple-800">barcodelookup.com</a> API key to automatically autofill product names, categories, descriptions, and photos when scanning barcodes.
+      <div>
+        <h3 className="text-xl font-bold text-gray-950">Barcode Lookup</h3>
+        <p className="text-sm text-gray-500 mt-1">
+          When you look up a barcode, these sources are asked in this order and the first match fills in the product name, brand,
+          category and photo. Free sources go first, so a paid source is only used when the free ones don&apos;t know the barcode.
+          Every result is saved, so each barcode is looked up (and paid for) only once.
+        </p>
+        {data && (
+          <p className="text-xs text-gray-500 mt-2">
+            Saved so far: <span className="font-semibold text-gray-700">{data.saved.found.toLocaleString()}</span> found,{' '}
+            <span className="font-semibold text-gray-700">{data.saved.notFound.toLocaleString()}</span> not found
           </p>
-        </div>
+        )}
       </div>
 
-      {loading ? (
+      {!data ? (
         <Loader className="h-12" />
       ) : (
-        <div className="space-y-3 max-w-xl">
-          <Field label="API Key">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Enter your Barcode Lookup API key"
-                value={apiKey}
-                disabled={!editable}
-                onChange={(e) => setApiKey(e.target.value)}
-                className={inputCls}
-              />
-              <button
-                type="button"
-                onClick={testKey}
-                disabled={testing || (!apiKey && !hasKey)}
-                className="px-3.5 py-2 text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-md border border-gray-300 disabled:opacity-50 cursor-pointer whitespace-nowrap transition-colors"
-              >
-                {testing ? 'Testing...' : 'Test Connection'}
-              </button>
-            </div>
-          </Field>
+        <>
+          <ol className="divide-y divide-gray-100 border border-gray-200 rounded-md">
+            {data.sources.map((s, i) => {
+              const e = edits[s.id] || {};
+              const needsKey = s.key === 'required' && !e.apiKey;
+              const status = !e.enabled
+                ? { label: 'Off', cls: 'bg-gray-100 text-gray-600' }
+                : needsKey
+                  ? { label: 'Needs key', cls: 'bg-amber-100 text-amber-800' }
+                  : { label: 'Active', cls: 'bg-emerald-100 text-emerald-800' };
+              return (
+                <li key={s.id} className="p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-bold text-gray-400">{i + 1}.</span>
+                        <a href={s.url} target="_blank" rel="noreferrer" className="font-semibold text-gray-950 hover:text-purple-700 hover:underline">
+                          {s.label}
+                        </a>
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${status.cls}`}>{status.label}</span>
+                        <span className="text-xs text-purple-700 font-medium">{s.cost}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">{s.note}</p>
+                    </div>
+                    <Toggle name={`lookup-${s.id}`} checked={e.enabled} disabled={!editable || saving} onChange={(v) => edit(s.id, { enabled: v })} />
+                  </div>
+                  <div className="flex gap-2 max-w-xl">
+                    {s.key !== 'none' && (
+                      <input
+                        type="text"
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-label={`${s.label} API key`}
+                        placeholder={s.key === 'optional' ? 'API key (optional)' : 'API key'}
+                        value={e.apiKey || ''}
+                        disabled={!editable}
+                        onChange={(ev) => edit(s.id, { apiKey: ev.target.value })}
+                        onFocus={(ev) => ev.target.value.includes('•') && ev.target.select()}
+                        className={inputCls}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => test(s.id)}
+                      disabled={!!testing || needsKey}
+                      className="px-3.5 py-2 text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-md border border-gray-300 disabled:opacity-50 cursor-pointer whitespace-nowrap transition-colors"
+                    >
+                      {testing === s.id ? 'Testing...' : 'Test'}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
 
           {editable && (
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-end">
               <button
                 type="button"
                 onClick={save}
                 disabled={saving}
                 className="px-4 py-2 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-md disabled:opacity-50 cursor-pointer shadow-xs transition-colors"
               >
-                {saving ? 'Saving...' : 'Save API Key'}
+                {saving ? 'Saving...' : 'Save'}
               </button>
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

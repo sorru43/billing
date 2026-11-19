@@ -6,7 +6,7 @@ import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '.
 import { toCsv } from '../pdf.js';
 import { ALERT_SQL, DEFAULT_ALERT } from '../stock.js';
 import { parseCsv } from './customers.js';
-import { lookupBarcode } from '../barcodeLookup.js';
+import { lookupBarcode, LookupError } from '../barcodeLookup.js';
 
 const r = Router();
 
@@ -109,7 +109,7 @@ r.get('/search', h(async (req, res) => {
   ok(res, [...matrices, ...rows.map(out)]);
 }));
 
-// Lookup product details via Barcode Lookup API (barcodelookup.com)
+// Lookup product details for a barcode: free sources first, paid ones only if needed (see barcodeLookup.js).
 r.get('/lookup-barcode', h(async (req, res) => {
   if (!can(req, 'products', 'view') && !can(req, 'products', 'create') && !can(req, 'products', 'edit') && !can(req, 'receiving', 'create')) {
     return fail(res, 403, 'You do not have permission to do this');
@@ -121,7 +121,12 @@ r.get('/lookup-barcode', h(async (req, res) => {
   try {
     const result = await lookupBarcode(barcode);
     if (!result.found) {
-      return ok(res, { found: false, barcode, message: result.message || 'Product not found in Barcode Lookup database' });
+      return ok(res, {
+        found: false,
+        barcode,
+        message: result.message || 'Product not found in any barcode lookup source',
+        warnings: result.warnings || [],
+      });
     }
 
     // Try matching existing category in database
@@ -145,20 +150,16 @@ r.get('/lookup-barcode', h(async (req, res) => {
       found: true,
       barcode,
       product: result.product,
+      source: result.source,
       matchedCategory,
       cached: result.cached || false,
+      warnings: result.warnings || [],
     });
   } catch (err) {
-    if (err.code === 'NO_API_KEY') {
-      return fail(res, 400, err.message, { code: 'NO_API_KEY' });
-    }
-    if (err.code === 'INVALID_KEY') {
-      return fail(res, 401, err.message, { code: 'INVALID_KEY' });
-    }
-    if (err.code === 'QUOTA_EXCEEDED') {
-      return fail(res, 429, err.message, { code: 'QUOTA_EXCEEDED' });
-    }
-    return fail(res, 502, err.message || 'Failed to lookup barcode');
+    if (!(err instanceof LookupError)) throw err;
+    // Never 401 here: the web app treats 401 as "session expired" and signs the user out.
+    const status = { NO_SOURCES: 400, INVALID_BARCODE: 422, QUOTA_EXCEEDED: 429 }[err.code] || 502;
+    return fail(res, status, err.message || 'Failed to lookup barcode', { code: err.code });
   }
 }));
 

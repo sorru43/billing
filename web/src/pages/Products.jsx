@@ -112,7 +112,7 @@ export default function Products() {
         onAction={() => navigate('/admin/products/new')}
       >
         {can('products', 'create') && (
-          <button type="button" onClick={() => setLookupOpen(true)} className={btnCls} title="Scan or lookup barcode with BarcodeLookup API">
+          <button type="button" onClick={() => setLookupOpen(true)} className={btnCls} title="Scan or look up a barcode (free sources first)">
             <Barcode size={14} className="text-purple-600" /> Scan Barcode
           </button>
         )}

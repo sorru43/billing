@@ -31,6 +31,7 @@ export default function ProductForm() {
   const [saving, setSaving] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupImage, setLookupImage] = useState('');
+  const [lookupSource, setLookupSource] = useState('');
 
   useEffect(() => {
     api.get('/categories/options').then((r) => setCategories(r.data)).catch(() => {});
@@ -51,9 +52,11 @@ export default function ProductForm() {
         .catch((e) => toast.error(e.message))
         .finally(() => setLoading(false));
     } else if (location.state?.prefill) {
-      setForm((f) => ({ ...f, ...location.state.prefill }));
-      if (location.state.prefill.image) {
-        setLookupImage(location.state.prefill.image);
+      const { source, ...prefill } = location.state.prefill;
+      setForm((f) => ({ ...f, ...prefill }));
+      if (prefill.image) {
+        setLookupImage(prefill.image);
+        setLookupSource(source || '');
       }
     }
   }, [id, location.state]);
@@ -77,17 +80,14 @@ export default function ProductForm() {
           description: p.description || (p.brand ? `Brand: ${p.brand}` : f.description),
           category_id: res.data.matchedCategory?.id || f.category_id,
         }));
-        if (p.image) setLookupImage(p.image);
-        toast.success(`Found on BarcodeLookup: ${p.name}`);
+        setLookupImage(p.image || '');
+        setLookupSource(res.data.source || '');
+        toast.success(`Found via ${res.data.source || 'barcode lookup'}: ${p.name}`);
       } else {
-        toast.info(res.data?.message || 'Product not found in Barcode Lookup database');
+        toast.info(res.data?.message || 'Product not found in any barcode lookup source');
       }
     } catch (err) {
-      if (err.errors?.code === 'NO_API_KEY') {
-        toast.error('Barcode Lookup API key is not configured. Please add it in Settings.');
-      } else {
-        toast.error(err.message || 'Barcode lookup failed');
-      }
+      toast.error(err.message || 'Barcode lookup failed');
     } finally {
       setLookingUp(false);
     }
@@ -206,7 +206,7 @@ export default function ProductForm() {
                 onClick={() => handleLookup()}
                 disabled={lookingUp || !form.barcode}
                 className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-md hover:bg-purple-100 text-xs font-semibold flex items-center gap-1.5 focus:outline-none focus:ring-1 focus:ring-purple-600 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shadow-2xs"
-                title="Lookup product info from BarcodeLookup API"
+                title="Look up product info (free sources first)"
               >
                 {lookingUp ? <Loader2 size={14} className="animate-spin text-purple-600" /> : <Sparkles size={14} className="text-purple-600" />}
                 <span>{lookingUp ? 'Fetching...' : 'Lookup API'}</span>
@@ -225,7 +225,7 @@ export default function ProductForm() {
                 <img src={lookupImage} alt="Product preview" className="w-9 h-9 object-contain rounded bg-white border border-gray-200" />
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold truncate">{form.name || 'Product photo'}</p>
-                  <p className="text-[10px] text-purple-600">Verified via BarcodeLookup</p>
+                  <p className="text-[10px] text-purple-600">Found via {lookupSource || 'barcode lookup'}</p>
                 </div>
                 <button
                   type="button"

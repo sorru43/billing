@@ -36,7 +36,8 @@ app.use(
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:'],
+        // https: lets barcode lookup photos show; they come from many store/CDN hosts, so no fixed list.
+        imgSrc: ["'self'", 'data:', 'https:'],
         fontSrc: ["'self'", 'data:'],
         connectSrc: ["'self'"],
         frameSrc: ["'self'"], // invoice PDF preview

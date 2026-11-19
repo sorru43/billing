@@ -1,183 +1,170 @@
-import { getSetting } from './settings.js';
+import { query } from './db.js';
+import { getSetting, setSetting } from './settings.js';
+import { SOURCES, LookupError } from './barcodeProviders.js';
 
-// In-memory cache to save API credits and prevent duplicate paid lookups
-const cache = new Map();
+// Free-first barcode lookup. Sources are asked in order (free first, most expensive last) and
+// the chain stops at the first match. Every answer is saved in barcode_lookups, so a barcode is
+// fetched, and paid for, only once. A "not found" is retried after NOT_FOUND_RETRY_DAYS, and right
+// away by any source that was added after the barcode was last looked up.
 
-export async function getBarcodeApiKey() {
-  const setting = await getSetting('barcode_lookup');
-  if (setting?.apiKey && setting.apiKey.trim()) {
-    return setting.apiKey.trim();
-  }
-  return (process.env.BARCODE_LOOKUP_API_KEY || '').trim();
-}
+const NOT_FOUND_RETRY_DAYS = 30;
+const MASK = '••••••••';
+
+export { LookupError };
 
 export function maskApiKey(key) {
   if (!key) return '';
-  if (key.length <= 8) return '••••••••';
-  return key.slice(0, 4) + '••••••••' + key.slice(-4);
+  if (key.length <= 8) return MASK;
+  return key.slice(0, 4) + MASK + key.slice(-4);
 }
 
-export async function lookupBarcode(rawBarcode, customKey = null) {
-  const barcode = String(rawBarcode || '').trim().replace(/[^0-9A-Za-z]/g, '');
-  if (!barcode) {
-    throw new Error('Please enter a valid barcode to lookup.');
-  }
+// The settings form gets keys back masked; a masked value sent back means "keep the saved key".
+const isMasked = (key) => String(key || '').includes('•');
 
-  // Check cache first
-  const cacheKey = barcode.toLowerCase();
-  if (cache.has(cacheKey)) {
-    return { ...cache.get(cacheKey), cached: true };
-  }
+export const normalizeBarcode = (raw) => String(raw || '').trim().replace(/[^0-9A-Za-z]/g, '');
 
-  const apiKey = customKey || (await getBarcodeApiKey());
-  if (!apiKey) {
-    const err = new Error(
-      'Barcode Lookup API key is not configured. Please add your API key in Settings > Barcode Lookup.',
-    );
-    err.code = 'NO_API_KEY';
-    throw err;
-  }
+// Stored as settings.barcode_lookup = { sources: { [id]: { enabled, apiKey } } }.
+// Older installs stored only { apiKey } for barcodelookup.com; that key (or the
+// BARCODE_LOOKUP_API_KEY env var) still applies until a new one is saved.
+async function loadSources() {
+  const setting = await getSetting('barcode_lookup');
+  const saved = setting.sources || {};
+  return SOURCES.map((src) => {
+    const cfg = saved[src.id] || {};
+    const storedKey = src.key === 'none' ? '' : String(cfg.apiKey ?? (src.id === 'barcodelookup' ? setting.apiKey || '' : '')).trim();
+    const apiKey = storedKey || (src.id === 'barcodelookup' ? String(process.env.BARCODE_LOOKUP_API_KEY || '').trim() : '');
+    const enabled = cfg.enabled !== false;
+    return { ...src, storedKey, apiKey, enabled, active: enabled && (src.key !== 'required' || Boolean(apiKey)) };
+  });
+}
 
-  const url = `https://api.barcodelookup.com/v3/products?barcode=${encodeURIComponent(
-    barcode,
-  )}&formatted=y&key=${encodeURIComponent(apiKey)}`;
+export async function getLookupSettings() {
+  const sources = await loadSources();
+  const { rows } = await query(
+    `SELECT count(*) FILTER (WHERE found)::int AS found, count(*) FILTER (WHERE NOT found)::int AS not_found FROM barcode_lookups`,
+  );
+  return {
+    sources: sources.map((s) => ({
+      id: s.id,
+      label: s.label,
+      key: s.key,
+      cost: s.cost,
+      note: s.note,
+      url: s.url,
+      enabled: s.enabled,
+      active: s.active,
+      hasKey: Boolean(s.apiKey),
+      apiKey: maskApiKey(s.apiKey),
+    })),
+    saved: { found: rows[0].found, notFound: rows[0].not_found },
+  };
+}
 
-  let response;
-  try {
-    response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'BillingApp/1.0',
-      },
-      signal: AbortSignal.timeout(9000),
-    });
-  } catch (e) {
-    if (e.name === 'TimeoutError') {
-      throw new Error('Barcode Lookup API request timed out. Please try again.');
-    }
-    throw new Error(`Failed to connect to Barcode Lookup API: ${e.message}`);
-  }
-
-  if (response.status === 404) {
-    const notFound = {
-      found: false,
-      barcode,
-      message: 'Product not found in Barcode Lookup database.',
+// updates: { [id]: { enabled?: boolean, apiKey?: string } }
+export async function saveLookupSettings(updates) {
+  const current = await loadSources();
+  const sources = {};
+  for (const src of current) {
+    const u = updates[src.id] || {};
+    const apiKey = typeof u.apiKey === 'string' && !isMasked(u.apiKey) ? u.apiKey.trim() : src.storedKey;
+    sources[src.id] = {
+      enabled: typeof u.enabled === 'boolean' ? u.enabled : src.enabled,
+      apiKey: src.key === 'none' ? '' : apiKey,
     };
-    cache.set(cacheKey, notFound);
-    return notFound;
+  }
+  await setSetting('barcode_lookup', { sources });
+}
+
+async function remember(barcode, found, source, product, tried) {
+  await query(
+    `INSERT INTO barcode_lookups (barcode, found, source, product, tried, looked_up_at)
+     VALUES ($1, $2, $3, $4, $5, now())
+     ON CONFLICT (barcode) DO UPDATE
+       SET found = EXCLUDED.found, source = EXCLUDED.source, product = EXCLUDED.product,
+           tried = EXCLUDED.tried, looked_up_at = now()`,
+    [barcode, found, source, product ? JSON.stringify(product) : null, tried],
+  );
+}
+
+const labelOf = (id) => SOURCES.find((s) => s.id === id)?.label || id;
+
+export async function lookupBarcode(rawBarcode) {
+  const barcode = normalizeBarcode(rawBarcode);
+  if (!barcode) throw new LookupError('Please enter a valid barcode to lookup.', 'INVALID_BARCODE');
+  // Barcodes starting with 2 are in-store codes (the Generate button makes these too); no public
+  // database has them, so don't spend lookups on them.
+  if (/^2\d{11,12}$/.test(barcode)) {
+    return { found: false, barcode, cached: false, message: 'This is an in-store barcode (it starts with 2), so no public database has it.' };
   }
 
-  if (response.status === 401 || response.status === 403) {
-    const err = new Error(
-      'Invalid Barcode Lookup API key or unauthorized. Please verify your key in Settings.',
-    );
-    err.code = 'INVALID_KEY';
-    throw err;
+  const sources = (await loadSources()).filter((s) => s.active);
+  if (!sources.length) {
+    throw new LookupError('All barcode lookup sources are turned off. Turn one on in Settings > Barcode Lookup.', 'NO_SOURCES');
   }
 
-  if (response.status === 429) {
-    const err = new Error(
-      'Barcode Lookup API rate limit or monthly credit quota exceeded.',
-    );
-    err.code = 'QUOTA_EXCEEDED';
-    throw err;
+  const { rows } = await query(
+    `SELECT found, source, product, tried, looked_up_at > now() - make_interval(days => $2) AS fresh
+       FROM barcode_lookups WHERE barcode = $1`,
+    [barcode, NOT_FOUND_RETRY_DAYS],
+  );
+  const saved = rows[0];
+  if (saved?.found) {
+    return { found: true, barcode, product: saved.product, source: labelOf(saved.source), cached: true };
   }
 
-  if (!response.ok) {
-    let errorText = '';
+  const alreadyTried = saved?.fresh ? saved.tried : [];
+  const toAsk = sources.filter((s) => !alreadyTried.includes(s.id));
+  if (!toAsk.length) {
+    return { found: false, barcode, cached: true, message: 'Product not found in any barcode lookup source.' };
+  }
+
+  const tried = [...alreadyTried];
+  const problems = [];
+  for (const src of toAsk) {
     try {
-      const errJson = await response.json();
-      errorText = Array.isArray(errJson?.errors)
-        ? errJson.errors.join(', ')
-        : errJson?.message || '';
-    } catch {
-      errorText = await response.text();
+      const product = await src.lookup(barcode, src.apiKey);
+      tried.push(src.id);
+      if (product) {
+        await remember(barcode, true, src.id, product, tried);
+        return { found: true, barcode, product, source: src.label, cached: false, warnings: problems.map((p) => p.message) };
+      }
+    } catch (e) {
+      // Not remembered as "tried": a timeout or a used-up limit says nothing about the barcode.
+      problems.push(e instanceof LookupError ? e : new LookupError(`${src.label}: ${e.message}`));
     }
-    throw new Error(
-      `Barcode Lookup API returned error (${response.status}): ${errorText || response.statusText}`,
-    );
   }
 
-  const data = await response.json();
-  const rawProduct = Array.isArray(data?.products) ? data.products[0] : null;
-
-  if (!rawProduct) {
-    return {
-      found: false,
-      barcode,
-      message: 'Product data not found in response.',
-    };
+  if (tried.length > alreadyTried.length) {
+    await remember(barcode, false, '', null, tried);
+  } else if (!alreadyTried.length) {
+    // No source could answer at all: report the problems instead of a false "not found".
+    if (problems.length === 1) throw problems[0];
+    throw new LookupError(`No lookup source could answer. ${problems.map((p) => p.message).join(' ')}`, problems[0].code);
   }
-
-  const product = {
-    barcode: rawProduct.barcode_number || barcode,
-    name: rawProduct.title || rawProduct.product_name || rawProduct.model || '',
-    brand: rawProduct.brand || rawProduct.manufacturer || '',
-    manufacturer: rawProduct.manufacturer || '',
-    model: rawProduct.model || '',
-    category: rawProduct.category || '',
-    description: rawProduct.description || '',
-    images: Array.isArray(rawProduct.images) ? rawProduct.images : [],
-    image:
-      Array.isArray(rawProduct.images) && rawProduct.images.length > 0
-        ? rawProduct.images[0]
-        : '',
-    mpn: rawProduct.mpn || '',
-    asin: rawProduct.asin || '',
-  };
-
-  const result = {
-    found: true,
+  return {
+    found: false,
     barcode,
-    product,
     cached: false,
+    message: problems.length
+      ? `Product not found. Some sources could not be checked: ${problems.map((p) => p.message).join(' ')}`
+      : 'Product not found in any barcode lookup source.',
+    warnings: problems.map((p) => p.message),
   };
-
-  // Cache up to 1,000 items in memory
-  if (cache.size > 1000) {
-    const firstKey = cache.keys().next().value;
-    cache.delete(firstKey);
-  }
-  cache.set(cacheKey, result);
-
-  return result;
 }
 
-export async function testBarcodeApiKey(customKey) {
-  const apiKey = customKey || (await getBarcodeApiKey());
-  if (!apiKey) {
-    return {
-      ok: false,
-      error: 'Please provide an API key to test.',
-    };
-  }
-
-  // Use a well-known universal test barcode (Pepsi 12oz: 012000000133)
-  const testBarcode = '012000000133';
+// Checks one source (and key) directly, skipping the saved results.
+export async function testLookupSource(id, rawKey) {
+  const src = (await loadSources()).find((s) => s.id === id);
+  if (!src) return { ok: false, error: 'Unknown lookup source.' };
+  const apiKey = rawKey && !isMasked(rawKey) ? String(rawKey).trim() : src.apiKey;
+  if (src.key === 'required' && !apiKey) return { ok: false, error: `Enter an API key for ${src.label} first.` };
   try {
-    const res = await lookupBarcode(testBarcode, apiKey);
-    if (res.found) {
-      return {
-        ok: true,
-        message: 'API Key is valid and working!',
-        testProduct: {
-          title: res.product.name,
-          brand: res.product.brand,
-          category: res.product.category,
-        },
-      };
-    }
+    const product = await src.lookup(src.testBarcode, apiKey);
     return {
       ok: true,
-      message: 'API Key is valid! Connected to Barcode Lookup successfully.',
+      message: product ? `${src.label} is working. Test product: ${product.name}` : `${src.label} is working.`,
     };
-  } catch (err) {
-    return {
-      ok: false,
-      error: err.message,
-      code: err.code || 'TEST_FAILED',
-    };
+  } catch (e) {
+    return { ok: false, error: e.message, code: e.code || 'TEST_FAILED' };
   }
 }
