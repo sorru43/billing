@@ -1,13 +1,16 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query, tx } from '../db.js';
-import { requirePerm } from '../auth.js';
+import { requirePerm, requireSuperAdmin } from '../auth.js';
 import { config } from '../config.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 import { getSetting } from '../settings.js';
 import { invoicePdf } from '../pdf.js';
 import { invoiceEmail, startRetentionWindow } from '../archive.js';
 import { receiveCustomerPayment, useCustomerCredit } from '../balance.js';
+import {
+  LOCKED_MESSAGE, seesAllInvoices, lockState, openWindow, closeAfterPrint, requestAccess, decideRequest, pendingRequests,
+} from '../invoiceAccess.js';
 
 const r = Router();
 const PRICE_FIELD = { selling: 'selling_price', top_customer: 'top_customer_price', jobber: 'jobber_price' };
@@ -84,6 +87,17 @@ const fullOut = (i) => ({
   notes: i.notes,
 });
 
+// What a locked-out cashier may see: enough to recognise the invoice and ask for access.
+const lockedOut = (i, request) => ({
+  id: i.id,
+  invoiceNumber: i.invoice_number,
+  customerName: i.customer_name,
+  invoiceDate: i.invoice_date,
+  createdAt: i.created_at,
+  locked: true,
+  accessRequest: request || null,
+});
+
 async function nextNumber(client, peek) {
   const { prefix = 'INV_' } = await getSetting('invoice');
   const q = peek
@@ -95,14 +109,38 @@ async function nextNumber(client, peek) {
 
 r.get('/', requirePerm('invoices', 'view'), h(async (req, res) => {
   const { limit, page, offset, search } = paging(req);
-  const where = search ? `WHERE invoice_number ILIKE $1 OR customer_name ILIKE $1 OR customer_email ILIKE $1` : '';
-  const params = search ? [likeEscape(search)] : [];
-  const total = (await query(`SELECT count(*)::int n FROM invoices ${where}`, params)).rows[0].n;
-  const { rows } = await query(`SELECT * FROM invoices ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`, params);
+  if (seesAllInvoices(req)) {
+    const where = search ? `WHERE invoice_number ILIKE $1 OR customer_name ILIKE $1 OR customer_email ILIKE $1` : '';
+    const params = search ? [likeEscape(search)] : [];
+    const total = (await query(`SELECT count(*)::int n FROM invoices ${where}`, params)).rows[0].n;
+    const { rows } = await query(`SELECT * FROM invoices ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`, params);
+    return ok(res, { invoices: rows.map(listOut), pagination: pagination(total, page, limit) });
+  }
+  // Locked-out cashier: invoices they hold an open window for in full, the rest as number + customer only.
+  const like = search ? likeEscape(search) : null;
+  const total = (await query(
+    `SELECT count(*)::int n FROM invoices i ${search ? 'WHERE i.invoice_number ILIKE $1 OR i.customer_name ILIKE $1' : ''}`,
+    search ? [like] : [],
+  )).rows[0].n;
+  const where = search ? `WHERE i.invoice_number ILIKE $2 OR i.customer_name ILIKE $2` : '';
+  const params = search ? [req.user.id, like] : [req.user.id];
+  const { rows } = await query(
+    `SELECT i.*, a.status AS access_status, (a.status = 'approved' AND a.view_until > now()) AS access_open
+       FROM invoices i LEFT JOIN invoice_access a ON a.invoice_id = i.id AND a.user_id = $1
+       ${where} ORDER BY i.created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+    params,
+  );
   ok(res, {
-    invoices: rows.map(listOut),
+    invoices: rows.map((i) =>
+      i.access_open ? { ...listOut(i), locked: false } : lockedOut(i, i.access_status === 'approved' ? null : i.access_status),
+    ),
     pagination: pagination(total, page, limit),
   });
+}));
+
+// Pending "Request access" taps from locked-out cashiers (admin only).
+r.get('/access-requests', requireSuperAdmin, h(async (req, res) => {
+  ok(res, await pendingRequests());
 }));
 
 r.get('/next-number', requirePerm('invoices', 'create'), h(async (req, res) => {
@@ -115,14 +153,18 @@ r.get('/:id', requirePerm('invoices', 'view'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
-  ok(res, fullOut(rows[0]));
+  const lock = await lockState(req, rows[0].id);
+  if (!lock.open) return ok(res, lockedOut(rows[0], lock.request));
+  ok(res, { ...fullOut(rows[0]), locked: false, access: lock.restricted ? { viewUntil: lock.viewUntil } : null });
 }));
 
 r.get('/:id/pdf', requirePerm('invoices', 'view'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
+  if (!(await lockState(req, rows[0].id)).open) return fail(res, 403, LOCKED_MESSAGE);
   const pdf = await invoicePdf(rows[0], await getSetting('company'));
+  await closeAfterPrint(req, rows[0].id); // a PDF download counts as printing it
   res.set({
     'Content-Type': 'application/pdf',
     'Content-Disposition': `inline; filename="${rows[0].invoice_number.replace(/[^\w.-]/g, '_')}.pdf"`,
@@ -224,6 +266,8 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
        config.invoiceRetentionHours, customerId],
     );
     const invoiceId = rows[0].id;
+    // The creator can open and print it now; for a locked-out cashier this window closes on the first print.
+    await openWindow(client, invoiceId, req.user.id);
 
     // Keep sales records in sync (settlement below updates this row too)
     await client.query(
@@ -340,12 +384,43 @@ r.post('/:id/email', requirePerm('invoices', 'view'), h(async (req, res) => {
   if (!to.success) return fail(res, 422, 'Enter a valid email address', { to: 'Enter a valid email address' });
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
+  if (!(await lockState(req, rows[0].id)).open) return fail(res, 403, LOCKED_MESSAGE);
   try {
     await invoiceEmail(rows[0], to.data, { archive: false });
   } catch (e) {
     return fail(res, 502, `Could not send email: ${e.message}`);
   }
+  await closeAfterPrint(req, rows[0].id); // emailing it counts as printing it
   ok(res, null, `Invoice emailed to ${to.data}`);
+}));
+
+// The Print button calls this before opening the print dialog: a locked-out cashier's window closes.
+r.post('/:id/printed', requirePerm('invoices', 'view'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
+  const lock = await lockState(req, req.params.id);
+  if (!lock.open) return fail(res, 403, LOCKED_MESSAGE);
+  await closeAfterPrint(req, req.params.id);
+  ok(res, null, 'Printed');
+}));
+
+// A locked-out cashier asks to open an invoice again.
+r.post('/:id/access-request', requirePerm('invoices', 'view'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
+  const exists = (await query(`SELECT 1 FROM invoices WHERE id=$1`, [req.params.id])).rowCount;
+  if (!exists) return fail(res, 404, 'Invoice not found');
+  const lock = await lockState(req, req.params.id);
+  if (lock.open) return ok(res, null, 'You can already open this invoice');
+  await requestAccess(req.params.id, req.user.id);
+  ok(res, null, 'Access requested. An admin needs to approve it.');
+}));
+
+// Admin approves (opens a window) or declines a cashier's request.
+r.post('/:id/access/:userId', requireSuperAdmin, h(async (req, res) => {
+  if (!isUuid(req.params.id) || !isUuid(req.params.userId)) return fail(res, 404, 'Request not found');
+  const approve = req.body?.approve === true;
+  const done = await decideRequest(req.params.id, req.params.userId, approve, req.user.id);
+  if (!done) return fail(res, 404, 'This request was already handled or no longer exists');
+  ok(res, null, approve ? 'Access approved' : 'Request declined');
 }));
 
 // Delete invoice from active invoices table (Admin only).
@@ -355,6 +430,7 @@ r.delete('/:id', requirePerm('invoices', 'delete'), h(async (req, res) => {
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
   const inv = rows[0];
+  if (!(await lockState(req, inv.id)).open) return fail(res, 403, LOCKED_MESSAGE);
 
   // Mark sales ledger record as deleted invoice, keeping the sale value permanently recorded
   await query(

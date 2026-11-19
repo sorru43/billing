@@ -8,6 +8,9 @@ export const MODULE_GROUPS = [
       { slug: 'customers', moduleName: 'Customers' },
       { slug: 'categories', moduleName: 'Categories & Brands' },
       { slug: 'invoices', moduleName: 'Invoices' },
+      // Without this, staff can open an invoice only right after creating it (until the first print,
+      // or 30 minutes) or after an admin approves their request. Only "view" applies.
+      { slug: 'invoice_history', moduleName: 'See past invoices (no admin approval needed)', actions: ['view'] },
       { slug: 'returns', moduleName: 'Returns' },
       { slug: 'receiving', moduleName: 'Receiving Inventory & Vendors' },
       { slug: 'import_export', moduleName: 'Import / Export (products & customers)' },

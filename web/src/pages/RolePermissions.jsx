@@ -7,7 +7,9 @@ import { Checkbox, FullPageLoader, SubmitButton } from '../components/ui.jsx';
 
 const ACTIONS = ['create', 'edit', 'delete', 'view'];
 const blank = { view: false, create: false, edit: false, delete: false };
-const allOn = (p) => ACTIONS.every((a) => p[a]);
+// Some modules use only some actions (e.g. "See past invoices" is view only).
+const actionsOf = (m) => m.actions || ACTIONS;
+const allOn = (p, m) => actionsOf(m || {}).every((a) => p[a]);
 
 // Same layout as the original Role Permissions screen: one card per module group,
 // CREATE / EDIT / DELETE / VIEW / ALLOW ALL per module.
@@ -33,12 +35,13 @@ export default function RolePermissions() {
   }, [id]);
 
   const get = (slug) => perms[slug] || blank;
-  const toggle = (slug, action) =>
+  const toggle = (m, action) =>
     setPerms((p) => {
+      const slug = m.slug;
       const cur = { ...get(slug) };
       if (action === 'allowAll') {
-        const v = !allOn(cur);
-        ACTIONS.forEach((a) => (cur[a] = v));
+        const v = !allOn(cur, m);
+        actionsOf(m).forEach((a) => (cur[a] = v));
       } else {
         cur[action] = !cur[action];
         if (action !== 'view' && cur[action]) cur.view = true; // can't act on what you can't see
@@ -48,9 +51,9 @@ export default function RolePermissions() {
     });
   const toggleGroup = (group) =>
     setPerms((p) => {
-      const v = !group.children.every((c) => allOn(get(c.slug)));
+      const v = !group.children.every((c) => allOn(get(c.slug), c));
       const next = { ...p };
-      group.children.forEach((c) => (next[c.slug] = { view: v, create: v, edit: v, delete: v }));
+      group.children.forEach((c) => (next[c.slug] = Object.fromEntries(ACTIONS.map((a) => [a, v && actionsOf(c).includes(a)]))));
       return next;
     });
 
@@ -82,7 +85,7 @@ export default function RolePermissions() {
               <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
                 <h2 className="font-bold text-gray-950">{g.moduleName}</h2>
                 <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-                  <Checkbox checked={g.children.every((c) => allOn(get(c.slug)))} onChange={() => toggleGroup(g)} disabled={!editable} />
+                  <Checkbox checked={g.children.every((c) => allOn(get(c.slug), c))} onChange={() => toggleGroup(g)} disabled={!editable} />
                   Allow All
                 </label>
               </div>
@@ -105,11 +108,11 @@ export default function RolePermissions() {
                           <td className="px-4 py-3 text-sm font-medium text-gray-950">{m.moduleName}</td>
                           {ACTIONS.map((a) => (
                             <td key={a} className="px-4 py-3">
-                              <Checkbox checked={p[a]} onChange={() => toggle(m.slug, a)} disabled={!editable} />
+                              {actionsOf(m).includes(a) && <Checkbox checked={p[a]} onChange={() => toggle(m, a)} disabled={!editable} />}
                             </td>
                           ))}
                           <td className="px-4 py-3">
-                            <Checkbox checked={allOn(p)} onChange={() => toggle(m.slug, 'allowAll')} disabled={!editable} />
+                            <Checkbox checked={allOn(p, m)} onChange={() => toggle(m, 'allowAll')} disabled={!editable} />
                           </td>
                         </tr>
                       );

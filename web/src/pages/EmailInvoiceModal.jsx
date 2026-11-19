@@ -4,7 +4,7 @@ import { Send } from 'lucide-react';
 import { api } from '../api.js';
 import { CancelButton, Field, Modal, SubmitButton, inputCls } from '../components/ui.jsx';
 
-export default function EmailInvoiceModal({ invoice, onClose }) {
+export default function EmailInvoiceModal({ invoice, onClose, onSent }) {
   const [to, setTo] = useState('');
   const [sending, setSending] = useState(false);
   useEffect(() => setTo(invoice?.customerEmail || ''), [invoice]);
@@ -15,6 +15,7 @@ export default function EmailInvoiceModal({ invoice, onClose }) {
     try {
       const r = await api.post(`/invoices/${invoice.id}/email`, { to });
       toast.success(r.message);
+      onSent?.();
       onClose();
     } catch (err) {
       toast.error(err.message);

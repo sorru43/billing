@@ -348,6 +348,21 @@ CREATE TABLE IF NOT EXISTS barcode_lookups (
   tried         text[] NOT NULL DEFAULT '{}',
   looked_up_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- Cashier invoice lock: staff without the "See past invoices" permission can open an invoice only
+-- while they hold an open window for it (right after creating it, or after an admin approves a request).
+-- status: requested | approved | declined. An approved window is open while view_until is in the future.
+CREATE TABLE IF NOT EXISTS invoice_access (
+  invoice_id    uuid NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status        text NOT NULL DEFAULT 'requested',
+  view_until    timestamptz,
+  requested_at  timestamptz,
+  decided_by    uuid REFERENCES users(id) ON DELETE SET NULL,
+  decided_at    timestamptz,
+  PRIMARY KEY (invoice_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS invoice_access_pending_idx ON invoice_access (requested_at) WHERE status = 'requested';
 `;
 
 async function main() {

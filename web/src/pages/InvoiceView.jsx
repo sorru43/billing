@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { ArrowLeft, Download, Mail, Printer, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, KeyRound, Lock, Mail, Printer, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, formatDate, Logo } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
@@ -10,6 +10,50 @@ import MarkPaidModal from '../components/MarkPaidModal.jsx';
 
 const btn = 'flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-md cursor-pointer';
 const round2 = (n) => Math.round(n * 100) / 100;
+
+// Shown to a cashier without "See past invoices" once their window on this invoice has closed.
+function LockedInvoice({ inv, onRequested }) {
+  const [sending, setSending] = useState(false);
+  const request = async () => {
+    setSending(true);
+    try {
+      const r = await api.post(`/invoices/${inv.id}/access-request`);
+      toast.success(r.message);
+      onRequested();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <div className="max-w-lg mx-auto mt-8 bg-white border border-gray-200 rounded-lg p-6 text-center space-y-3">
+      <div className="mx-auto h-12 w-12 rounded-full bg-gray-100 flex items-center justify-center text-gray-500">
+        <Lock size={22} />
+      </div>
+      <h1 className="text-lg font-bold text-gray-950">Invoice {inv.invoiceNumber} is locked</h1>
+      <p className="text-sm text-gray-600">
+        {inv.customerName} · {formatDate(inv.invoiceDate)}
+      </p>
+      <p className="text-sm text-gray-600">
+        Invoices lock after they are printed, downloaded or emailed, or 30 minutes after they were made. An admin has to approve
+        access before you can open it again.
+      </p>
+      {inv.accessRequest === 'requested' && (
+        <p className="text-sm font-semibold text-amber-700">Access requested. Waiting for an admin to approve it.</p>
+      )}
+      {inv.accessRequest === 'declined' && <p className="text-sm font-semibold text-red-600">Your last request was declined.</p>}
+      <div className="flex justify-center gap-2 pt-1">
+        <Link to="/admin/invoices" className={`${btn} text-gray-600 hover:bg-gray-100`}>
+          <ArrowLeft size={16} /> Invoices
+        </Link>
+        <button type="button" onClick={request} disabled={sending} className={`${btn} bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50`}>
+          <KeyRound size={16} /> {inv.accessRequest === 'requested' ? 'Ask again' : 'Request access'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function InvoiceView() {
   const { id } = useParams();
@@ -20,8 +64,11 @@ export default function InvoiceView() {
   const [error, setError] = useState('');
   const [emailing, setEmailing] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [printed, setPrinted] = useState(false); // a locked-out cashier just printed / downloaded / emailed it
 
   const isAdmin = user?.user_type === 1;
+  // Set for cashiers without "See past invoices": the invoice locks for them on first print.
+  const restricted = Boolean(inv?.access);
 
   const load = useCallback(() => {
     api.get(`/invoices/${id}`).then((r) => setInv(r.data)).catch((e) => setError(e.message));
@@ -43,7 +90,7 @@ export default function InvoiceView() {
       return;
     }
     try {
-      await api.delete(`/invoices/${id}`);
+      await api.del(`/invoices/${id}`);
       toast.success(`Invoice ${inv.invoiceNumber} deleted. Sale value preserved in Reports.`);
       navigate('/admin/invoices');
     } catch (e) {
@@ -63,6 +110,20 @@ export default function InvoiceView() {
     );
   if (!inv) return <Loader className="h-64" />;
 
+  if (inv.locked) return <LockedInvoice inv={inv} onRequested={load} />;
+
+  const print = async () => {
+    if (restricted) {
+      try {
+        await api.post(`/invoices/${id}/printed`);
+      } catch (e) {
+        return toast.error(e.message);
+      }
+      setPrinted(true);
+    }
+    window.print();
+  };
+
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <div className="flex flex-wrap justify-between items-center gap-2 no-print">
@@ -70,10 +131,16 @@ export default function InvoiceView() {
           <ArrowLeft size={16} /> Invoices
         </button>
         <div className="flex flex-wrap gap-2">
-          <a href={`/api/invoices/${id}/pdf`} target="_blank" rel="noopener" className={`${btn} bg-gray-200 text-gray-700 hover:bg-gray-300`}>
+          <a
+            href={`/api/invoices/${id}/pdf`}
+            target="_blank"
+            rel="noopener"
+            onClick={() => restricted && setPrinted(true)}
+            className={`${btn} bg-gray-200 text-gray-700 hover:bg-gray-300`}
+          >
             <Download size={16} /> PDF
           </a>
-          <button onClick={() => window.print()} className={`${btn} bg-gray-200 text-gray-700 hover:bg-gray-300`}>
+          <button onClick={print} className={`${btn} bg-gray-200 text-gray-700 hover:bg-gray-300`}>
             <Printer size={16} /> Print
           </button>
           <button onClick={() => setEmailing(true)} className={`${btn} bg-purple-600 text-white hover:bg-gray-950`}>
@@ -110,6 +177,24 @@ export default function InvoiceView() {
         </div>
       </div>
 
+      {restricted && (
+        <div
+          className={`no-print flex items-start gap-2 p-3 rounded-lg border text-sm ${
+            printed ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-blue-50 border-blue-200 text-blue-900'
+          }`}
+        >
+          <Lock size={16} className="mt-0.5 shrink-0" />
+          {printed ? (
+            <p>This invoice is now locked for you. Once you leave this page you'll need an admin to approve access to open it again.</p>
+          ) : (
+            <p>
+              This invoice locks for you as soon as you print, download or email it, or at{' '}
+              <strong>{new Date(inv.access.viewUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong>. After that
+              you'll need an admin to approve access.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="bg-white border border-gray-200 rounded-lg p-6 md:p-8 space-y-6">
         <div className="flex justify-between items-start">
@@ -199,7 +284,7 @@ export default function InvoiceView() {
         </div>
       </div>
 
-      <EmailInvoiceModal invoice={emailing ? inv : null} onClose={() => setEmailing(false)} />
+      <EmailInvoiceModal invoice={emailing ? inv : null} onClose={() => setEmailing(false)} onSent={() => restricted && setPrinted(true)} />
       <MarkPaidModal
         isOpen={paying}
         invoice={inv}

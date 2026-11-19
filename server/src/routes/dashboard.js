@@ -18,7 +18,8 @@ r.get('/', requirePerm('dashboard', 'view'), h(async (req, res) => {
     data.lowStock = (await query(`SELECT p.id, p.name, p.quantity, ${ALERT_SQL} AS alert_level FROM products p WHERE p.quantity <= ${ALERT_SQL} ORDER BY p.quantity, p.name LIMIT 5`)).rows;
   }
   if (can(req, 'categories', 'view')) data.categories = (await one(`SELECT count(*)::int total FROM categories`)).total;
-  if (can(req, 'invoices', 'view')) {
+  // Sales figures and recent invoices are hidden from cashiers who can't open past invoices.
+  if (can(req, 'invoices', 'view') && can(req, 'invoice_history', 'view')) {
     data.invoices = await one(`SELECT count(*)::int total, COALESCE(sum(total),0) amount,
         COALESCE(sum(total) FILTER (WHERE status='paid'),0) paid
       FROM invoices`);
