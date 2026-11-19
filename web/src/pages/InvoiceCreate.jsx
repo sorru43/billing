@@ -834,7 +834,9 @@ export default function InvoiceCreate() {
       }),
     [rows],
   );
-  const total = round2(lines.reduce((a, l) => a + l.amount, 0));
+  // Lines here have no discount or tax, so the subtotal is the total (the server recomputes both on save).
+  const subtotal = round2(lines.reduce((a, l) => a + l.amount, 0));
+  const total = subtotal;
 
   const validateInvoice = () => {
     setErrors({});
