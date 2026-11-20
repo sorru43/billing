@@ -30,7 +30,7 @@ r.get('/', requirePerm('categories', 'view'), h(async (req, res) => {
 
 // Minimal list for dropdowns: anyone who can work with products may read it.
 r.get('/options', h(async (req, res) => {
-  if (!can(req, 'products', 'view') && !can(req, 'categories', 'view') && !can(req, 'reports', 'view')) {
+  if (!can(req, 'products', 'view') && !can(req, 'products', 'create') && !can(req, 'categories', 'view') && !can(req, 'reports', 'view')) {
     return fail(res, 403, 'You do not have permission to do this');
   }
   const { rows } = await query(`SELECT id, name FROM categories WHERE status = true ORDER BY name`);

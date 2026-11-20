@@ -109,6 +109,26 @@ r.get('/search', h(async (req, res) => {
   ok(res, [...matrices, ...rows.map(out)]);
 }));
 
+// Barcode scan on the invoice screen: the one active product with exactly this barcode.
+// A 12-digit UPC and its 13-digit EAN form (leading 0) are the same code, so either matches.
+// When only an inactive product has it, say so: the cashier can't sell it and can't add it again.
+r.get('/scan', h(async (req, res) => {
+  if (!can(req, 'invoices', 'create') && !can(req, 'products', 'view') && !can(req, 'receiving', 'create')) return fail(res, 403, 'You do not have permission to do this');
+  const code = String(req.query.code || '').trim().slice(0, 64);
+  if (!code) return fail(res, 422, 'Scan or enter a barcode');
+  const codes = [code];
+  if (/^\d{12}$/.test(code)) codes.push(`0${code}`);
+  if (/^0\d{12}$/.test(code)) codes.push(code.slice(1));
+  const { rows } = await query(
+    `${SELECT} WHERE p.barcode = ANY($1::text[]) ORDER BY (p.status AND (p.matrix_id IS NULL OR m.status)) DESC, (p.barcode = $2) DESC LIMIT 1`,
+    [codes, code],
+  );
+  const p = rows[0];
+  if (!p) return ok(res, { product: null, inactive: false });
+  const active = p.status && (!p.matrix_id || p.matrix_status);
+  ok(res, active ? { product: out(p), inactive: false } : { product: null, inactive: true, name: p.name });
+}));
+
 // Lookup product details for a barcode: free sources first, paid ones only if needed (see barcodeLookup.js).
 r.get('/lookup-barcode', h(async (req, res) => {
   if (!can(req, 'products', 'view') && !can(req, 'products', 'create') && !can(req, 'products', 'edit') && !can(req, 'receiving', 'create')) {

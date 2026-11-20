@@ -7,6 +7,7 @@ import { useAuth, useMoney, Logo } from '../auth.jsx';
 import { useI18n } from '../i18n.jsx';
 import { CancelButton, Modal, SubmitButton, useDebounced } from '../components/ui.jsx';
 import MatrixGridModal from '../components/MatrixGridModal.jsx';
+import { ScanBar, ScanProblemModal, beep, useStoredFlag } from '../components/BarcodeScan.jsx';
 
 const LEVELS = [
   { value: 'selling', label: 'Selling Price', field: 'selling_price' },
@@ -752,6 +753,22 @@ export default function InvoiceCreate() {
     api.get('/settings/inventory').then((r) => setAllowOversell(r.data.allowOutOfStockSales)).catch(() => {});
   }, []);
 
+  // Barcode scanning (see BarcodeScan.jsx): each scan adds 1 of the item, or a popup says why it couldn't.
+  const [scanMode, setScanMode] = useStoredFlag('billing_scan_mode', true);
+  const [scanSound, setScanSound] = useStoredFlag('billing_scan_sound', true);
+  const [scanStatus, setScanStatus] = useState(null); // { ok, text } for the last scan
+  const [scanProblem, setScanProblem] = useState(null); // the popup's contents
+  const [scanBusy, setScanBusy] = useState(false);
+  const scanBoxRef = useRef(null);
+  const scanQueue = useRef(Promise.resolve()); // scans are handled one at a time, in order
+  const scanCache = useRef(new Map()); // barcode -> product, so repeat scans are instant
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  // Back to the scan box once the popup closes, so the next scan goes in.
+  useEffect(() => {
+    if (scanMode && !scanProblem) scanBoxRef.current?.focus();
+  }, [scanMode, scanProblem]);
+
   useEffect(() => {
     api.get('/invoices/next-number').then((r) => {
       setNumber(r.data.invoiceNumber);
@@ -825,6 +842,82 @@ export default function InvoiceCreate() {
       else next = [...next.filter((r) => r.product), ...fresh];
       return next.length ? next : [newRow()];
     });
+  };
+
+  // Same merge rule as pickProduct: same item, name or barcode means the same line.
+  const isSameItem = (r, p) => {
+    if (!r.product) return false;
+    const name = (p.name || '').trim().toLowerCase();
+    const barcode = (p.barcode || '').trim();
+    return (
+      r.product.id === p.id ||
+      Boolean(name && (r.product.name || '').trim().toLowerCase() === name) ||
+      Boolean(barcode && (r.product.barcode || '').trim() === barcode)
+    );
+  };
+
+  const scanFailed = (problem, text) => {
+    if (scanSound) beep(false);
+    setScanStatus({ ok: false, text });
+    setScanProblem(problem);
+  };
+
+  // One scan = 1 more of the item: tops up its line, else fills the first empty line, else adds a line.
+  const addScanned = (p) => {
+    const line = rowsRef.current.find((r) => isSameItem(r, p));
+    const qty = (line ? Number(line.quantity) || 0 : 0) + 1;
+    const stock = Number((line?.product || p).quantity);
+    if (!allowOversell && qty > stock) {
+      scanFailed({ kind: 'noStock', code: p.barcode, name: p.name, stock }, `${p.name}: ${t('scan.only', 'only')} ${stock} ${t('scan.in_stock', 'in stock')}`);
+      return;
+    }
+    const apply = (rs) => {
+      const i = rs.findIndex((r) => isSameItem(r, p));
+      if (i >= 0) return rs.map((r, j) => (j === i ? { ...r, quantity: (Number(r.quantity) || 0) + 1 } : r));
+      const added = { ...newRow(), product: p, rate: Number(p[level.field]), description: p.description || '' };
+      const empty = rs.findIndex((r) => !r.product);
+      if (empty >= 0) return rs.map((r, j) => (j === empty ? { ...added, key: r.key } : r));
+      return [...rs, added];
+    };
+    rowsRef.current = apply(rowsRef.current); // a fast second scan must see this one before React re-renders
+    setRows(apply);
+    if (scanSound) beep(true);
+    setScanStatus({ ok: true, text: `✓ ${p.name} × ${qty} · ${money(line ? line.rate : p[level.field])}` });
+  };
+
+  const lookupScan = async (code) => {
+    const cached = scanCache.current.get(code);
+    if (cached) return addScanned(cached);
+    setScanBusy(true);
+    try {
+      const { data } = await api.get('/products/scan', { code });
+      if (data.product) {
+        scanCache.current.set(code, data.product);
+        addScanned(data.product);
+      } else if (data.inactive) {
+        scanFailed({ kind: 'inactive', code, name: data.name }, `${data.name}: ${t('scan.inactive', 'Product is turned off')}`);
+      } else {
+        scanFailed({ kind: 'notFound', code }, `${t('scan.not_found', 'Product not found')}: ${code}`);
+      }
+    } catch (err) {
+      scanFailed({ kind: 'error', code, message: err.message }, err.message);
+    } finally {
+      setScanBusy(false);
+    }
+  };
+
+  const handleScan = (raw) => {
+    const code = String(raw || '').trim();
+    if (!code) return;
+    setScanProblem(null); // the next scan closes the last popup
+    scanQueue.current = scanQueue.current.then(() => lookupScan(code)).catch(() => {});
+  };
+
+  const addCreatedProduct = (p) => {
+    setScanProblem(null);
+    scanCache.current.set(p.barcode, p);
+    toast.success(`${p.name}: ${t('scan.created', 'product added to the catalog')}`);
+    addScanned(p);
   };
 
   const lines = useMemo(
@@ -996,6 +1089,16 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <ScanBar
+              enabled={scanMode}
+              onToggle={setScanMode}
+              onScan={handleScan}
+              status={scanStatus}
+              boxRef={scanBoxRef}
+              sound={scanSound}
+              onSound={setScanSound}
+              busy={scanBusy}
+            />
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[760px]">
                 <thead>
@@ -1129,6 +1232,7 @@ export default function InvoiceCreate() {
         </div>
       </form>
       <MatrixGridModal matrixId={grid?.matrixId} priceField={level.field} onClose={() => setGrid(null)} onAdd={addFromGrid} allowOversell={allowOversell} />
+      <ScanProblemModal problem={scanProblem} onClose={() => setScanProblem(null)} canCreate={can('products', 'create')} onCreated={addCreatedProduct} />
     </div>
   );
 }
