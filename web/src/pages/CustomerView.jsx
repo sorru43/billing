@@ -7,6 +7,7 @@ import { useAuth, useMoney, formatDate } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
 import { UpdateBalanceModal } from './Customers.jsx';
 import MarkPaidModal from '../components/MarkPaidModal.jsx';
+import CustomerPrices from '../components/CustomerPrices.jsx';
 
 const th = 'text-left px-3 py-2 text-xs font-semibold text-gray-600 uppercase';
 const td = 'px-3 py-2 text-sm text-gray-600';
@@ -66,6 +67,7 @@ export default function CustomerView() {
     ['paid', `Paid Invoices (${data.paid.length})`],
     ['returns', `Returns (${data.returns.length})`],
     ['payments', `Payment History (${data.payments?.length || 0})`],
+    ['prices', 'Custom Prices'],
   ];
   const invoices = tab === 'paid' ? data.paid : data.unpaid;
   const invLink = (inv) =>
@@ -131,7 +133,9 @@ export default function CustomerView() {
       </div>
 
       <div className="overflow-x-auto border border-gray-200 rounded-md bg-white">
-        {tab === 'payments' ? (
+        {tab === 'prices' ? (
+          <CustomerPrices customer={c} />
+        ) : tab === 'payments' ? (
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>

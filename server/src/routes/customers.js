@@ -124,6 +124,76 @@ r.get('/:id', requirePerm('customers', 'view'), h(async (req, res) => {
   ok(res, out(rows[0]));
 }));
 
+// The customer's own prices (per product, or per matrix item for all its flavors).
+// Invoice makers need them too, to price the customer's lines.
+const priceSchema = z
+  .object({
+    productId: z.string().uuid().optional().or(z.literal('')).or(z.null()).transform((v) => v || null),
+    matrixId: z.string().uuid().optional().or(z.literal('')).or(z.null()).transform((v) => v || null),
+    price: z.coerce.number({ error: 'Price must be a number' }).min(0, 'Price cannot be negative').max(1e11),
+  })
+  .refine((b) => Boolean(b.productId) !== Boolean(b.matrixId), { message: 'Choose a product or a matrix item', path: ['productId'] });
+
+const PRICES_SQL = `
+  SELECT cp.id, cp.product_id, cp.matrix_id, cp.price, cp.updated_at,
+         coalesce(p.name, m.name) AS name, p.barcode,
+         coalesce(p.selling_price, m.selling_price) AS selling_price,
+         coalesce(p.top_customer_price, m.top_customer_price) AS top_customer_price,
+         coalesce(p.jobber_price, m.jobber_price) AS jobber_price,
+         (SELECT count(*)::int FROM products v WHERE v.matrix_id = cp.matrix_id) AS variant_count
+    FROM customer_prices cp
+    LEFT JOIN products p ON p.id = cp.product_id
+    LEFT JOIN product_matrices m ON m.id = cp.matrix_id
+   WHERE cp.customer_id = $1`;
+const priceOut = (x) => ({
+  id: x.id,
+  productId: x.product_id,
+  matrixId: x.matrix_id,
+  name: x.name,
+  barcode: x.barcode || '',
+  isMatrix: Boolean(x.matrix_id),
+  variantCount: x.matrix_id ? x.variant_count : null,
+  price: Number(x.price),
+  levelPrices: { selling: Number(x.selling_price), top_customer: Number(x.top_customer_price), jobber: Number(x.jobber_price) },
+  updatedAt: x.updated_at,
+});
+
+r.get('/:id/prices', h(async (req, res) => {
+  if (!can(req, 'customers', 'view') && !can(req, 'invoices', 'create') && !can(req, 'invoices', 'edit')) {
+    return fail(res, 403, 'You do not have permission to do this');
+  }
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');
+  const { rows } = await query(`${PRICES_SQL} ORDER BY lower(coalesce(p.name, m.name))`, [req.params.id]);
+  ok(res, rows.map(priceOut));
+}));
+
+// Add or change one price (same product / matrix item again = update).
+r.put('/:id/prices', requirePerm('customers', 'edit'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');
+  const b = validate(priceSchema, req.body, res);
+  if (!b) return;
+  if (!(await query(`SELECT 1 FROM customers WHERE id=$1`, [req.params.id])).rowCount) return fail(res, 404, 'Customer not found');
+  const target = b.productId
+    ? await query(`SELECT 1 FROM products WHERE id=$1`, [b.productId])
+    : await query(`SELECT 1 FROM product_matrices WHERE id=$1`, [b.matrixId]);
+  if (!target.rowCount) return fail(res, 404, b.productId ? 'Product not found' : 'Matrix item not found');
+  const conflict = b.productId ? '(customer_id, product_id) WHERE product_id IS NOT NULL' : '(customer_id, matrix_id) WHERE matrix_id IS NOT NULL';
+  const { rows } = await query(
+    `INSERT INTO customer_prices (customer_id, product_id, matrix_id, price) VALUES ($1, $2, $3, $4)
+     ON CONFLICT ${conflict} DO UPDATE SET price = EXCLUDED.price, updated_at = now() RETURNING id`,
+    [req.params.id, b.productId, b.matrixId, b.price],
+  );
+  const saved = (await query(`${PRICES_SQL} AND cp.id = $2`, [req.params.id, rows[0].id])).rows[0];
+  ok(res, priceOut(saved), 'Customer price saved');
+}));
+
+r.delete('/:id/prices/:priceId', requirePerm('customers', 'edit'), h(async (req, res) => {
+  if (!isUuid(req.params.id) || !isUuid(req.params.priceId)) return fail(res, 404, 'Price not found');
+  const { rowCount } = await query(`DELETE FROM customer_prices WHERE id=$1 AND customer_id=$2`, [req.params.priceId, req.params.id]);
+  if (!rowCount) return fail(res, 404, 'Price not found');
+  ok(res, null, 'Customer price removed');
+}));
+
 // Customer statement: combined totals plus their unpaid and paid invoices and returns.
 r.get('/:id/statement', requirePerm('customers', 'view'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');

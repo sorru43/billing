@@ -32,6 +32,8 @@ const MENU = [
     title: 'Invoices',
     slug: 'invoices',
     addPath: '/admin/invoices/create-invoice',
+    createKey: 'nav.new_invoice',
+    createTitle: 'New Invoice',
   },
   { type: 'link', to: '/admin/returns', icon: <Undo2 size={16} />, key: 'nav.returns', title: 'Returns', slug: 'returns', addPath: '/admin/returns/new' },
   {
@@ -104,7 +106,12 @@ function Sidebar({ isOpen }) {
     const visible = MENU.map((item) => {
       if (item.type === 'link') {
         if (item.check) return item.check(can) ? item : null;
-        return can(item.slug) ? item : null;
+        if (can(item.slug)) return item;
+        // Create-only staff (e.g. a cashier who may make invoices but not see the list): link straight to "new".
+        if (item.addPath && can(item.slug, 'create')) {
+          return { ...item, to: item.addPath, key: item.createKey || item.key, title: item.createTitle || item.title, addPath: null };
+        }
+        return null;
       }
       if (item.type === 'collapsible') {
         const children = item.children.filter((c) => !c.slug || can(c.slug));

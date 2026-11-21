@@ -8,7 +8,9 @@ const keyOf = (o1, o2) => `${o1.toLowerCase()}\u0000${(o2 || '').toLowerCase()}`
 
 // Grid of a matrix item's variants (rows = attribute 1, columns = attribute 2):
 // type a quantity in each cell, then every non-zero cell becomes an invoice line.
-export default function MatrixGridModal({ matrixId, priceField, onClose, onAdd, allowOversell = false }) {
+export default function MatrixGridModal({ matrixId, priceField, priceOf, onClose, onAdd, allowOversell = false }) {
+  // priceOf(variant): the price this invoice uses (e.g. the customer's own price); defaults to the price level.
+  const unitPrice = (v) => (priceOf ? priceOf(v) : Number(v[priceField]));
   const money = useMoney();
   const [matrix, setMatrix] = useState(null);
   const [qty, setQty] = useState({});
@@ -32,7 +34,7 @@ export default function MatrixGridModal({ matrixId, priceField, onClose, onAdd, 
   const cols = matrix?.attr2_name ? matrix.attr2_values : [''];
   const picked = [...byKey.values()].filter((v) => Number(qty[v.id]) > 0);
   const units = picked.reduce((a, v) => a + Number(qty[v.id]), 0);
-  const amount = picked.reduce((a, v) => a + Number(qty[v.id]) * Number(v[priceField]), 0);
+  const amount = picked.reduce((a, v) => a + Number(qty[v.id]) * unitPrice(v), 0);
   const over = !allowOversell && picked.some((v) => Number(qty[v.id]) > v.quantity);
 
   const add = () => {
@@ -86,7 +88,7 @@ export default function MatrixGridModal({ matrixId, priceField, onClose, onAdd, 
                             className={`w-20 h-9 p-1.5 text-center border rounded focus:outline-none focus:ring-1 focus:ring-purple-600 ${bad ? (allowOversell ? 'border-amber-500 text-amber-700' : 'border-red-500 text-red-600') : 'border-gray-200 text-gray-700'} disabled:bg-gray-50`}
                           />
                           <p className={`text-[11px] mt-0.5 ${v.quantity <= 0 ? 'text-red-600' : 'text-gray-500'}`}>
-                            {v.quantity} in stock · {money(v[priceField])}
+                            {v.quantity} in stock · {money(unitPrice(v))}
                           </p>
                         </td>
                       );

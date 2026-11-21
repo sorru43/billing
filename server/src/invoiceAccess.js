@@ -34,6 +34,15 @@ export async function lockState(req, invoiceId) {
   };
 }
 
+// This user's own window on the invoice is open right now (ignores "See past invoices").
+export async function hasOpenWindow(invoiceId, userId) {
+  const { rowCount } = await query(
+    `SELECT 1 FROM invoice_access WHERE invoice_id = $1 AND user_id = $2 AND status = 'approved' AND view_until > now()`,
+    [invoiceId, userId],
+  );
+  return rowCount > 0;
+}
+
 // Opens (or reopens) a window for this user. decidedBy is the approving admin, null for the creator.
 export const openWindow = (db, invoiceId, userId, decidedBy = null) =>
   db.query(

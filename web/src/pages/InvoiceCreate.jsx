@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { Banknote, Building2, CheckSquare, CirclePlus, CreditCard, FileCheck, Grid3x3, HelpCircle, Send, Smartphone, Trash2, XCircle } from 'lucide-react';
+import { Banknote, Building2, CheckSquare, CirclePlus, CreditCard, FileCheck, Grid3x3, HelpCircle, Printer, Send, Smartphone, Trash2, XCircle } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, Logo } from '../auth.jsx';
 import { useI18n } from '../i18n.jsx';
@@ -732,45 +732,153 @@ export function InvoicePaymentModal({
   );
 }
 
+// Shown to staff who can make invoices but not open the invoice list: print it here, then start the next one.
+// The PDF opens only while the creator's window on the invoice is open (it closes after printing).
+function SavedInvoiceModal({ saved, money, onNext }) {
+  const { t } = useI18n();
+  if (!saved) return null;
+  return (
+    <Modal isOpen onClose={onNext} title={t('inv.saved_title', 'Invoice saved')} size="md">
+      <div className="space-y-4 text-center">
+        <FileCheck size={40} className="mx-auto text-emerald-600" />
+        <div>
+          <p className="text-lg font-bold text-gray-950">{saved.invoiceNumber}</p>
+          <p className="text-sm text-gray-600">
+            {saved.customerName} · {money(saved.total)}
+          </p>
+        </div>
+        <p className="text-xs text-gray-500">
+          {t('inv.saved_print_once', 'Print it now. After printing, an admin has to approve access to open it again.')}
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2 justify-center">
+          <a
+            href={`/api/invoices/${saved.id}/pdf`}
+            target="_blank"
+            rel="noopener"
+            className="inline-flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-gray-950"
+          >
+            <Printer size={16} /> {t('inv.print_pdf', 'Print / PDF')}
+          </a>
+          <button
+            type="button"
+            onClick={onNext}
+            className="inline-flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-100 cursor-pointer"
+          >
+            <CirclePlus size={16} /> {t('inv.start_next', 'Start next invoice')}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const EMPTY_PAYMENT = {
+  isNotPaid: false,
+  cash: '',
+  cheque: '',
+  chequeNumber: '',
+  bank: '',
+  bankReference: '',
+  card: '',
+  cardReference: '',
+  other: '',
+  otherNote: '',
+};
+const EMPTY_FORM = {
+  invoiceDate: '',
+  dueDate: '',
+  customerId: '',
+  customerName: '',
+  customerEmail: '',
+  customerPhone: '',
+  customerAddress: '',
+  priceLevel: 'selling',
+  notes: '',
+  status: 'unpaid',
+};
+const NO_PRICES = { products: new Map(), matrices: new Map() };
+
+// New invoice, or (with :id) editing a saved one. Each line's price comes from the customer's own
+// price for that product (or its matrix item) when there is one, else from the price level; a price
+// typed by hand ("manual") or kept from the saved invoice ("saved") is never re-priced automatically.
 export default function InvoiceCreate() {
   const navigate = useNavigate();
+  const { id: editId } = useParams();
+  const editing = Boolean(editId);
   const { company, can } = useAuth();
   const money = useMoney();
   const { t } = useI18n();
   const [number, setNumber] = useState('');
-  const [payment, setPayment] = useState({
-    isNotPaid: false,
-    cash: '',
-    cheque: '',
-    chequeNumber: '',
-    bank: '',
-    bankReference: '',
-    card: '',
-    cardReference: '',
-    other: '',
-    otherNote: '',
-  });
+  const [payment, setPayment] = useState(EMPTY_PAYMENT);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [form, setForm] = useState({
-    invoiceDate: today(),
-    dueDate: '',
-    customerId: '',
-    customerName: '',
-    customerEmail: '',
-    customerPhone: '',
-    customerAddress: '',
-    priceLevel: 'selling',
-    notes: '',
-    status: 'unpaid',
-  });
+  const [form, setForm] = useState(() => ({ ...EMPTY_FORM, invoiceDate: today() }));
   const [rows, setRows] = useState([newRow()]);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [grid, setGrid] = useState(null); // { matrixId, rowKey } while the matrix grid is open
   const [allowOversell, setAllowOversell] = useState(false); // admin setting: sell more than is in stock
+  const [custPrices, setCustPrices] = useState(NO_PRICES);
+  const [saved, setSaved] = useState(null); // create-only staff: the invoice just made, to print
+  const [editInfo, setEditInfo] = useState(null); // { paidAmount, status } of the invoice being edited
+  const [loadError, setLoadError] = useState('');
+  // Editing: the invoice's own quantities count as available stock for its lines.
+  const origQty = useRef(new Map());
+  const stockOf = (p) => Number(p.quantity) + (origQty.current.get(p.id) || 0);
   useEffect(() => {
     api.get('/settings/inventory').then((r) => setAllowOversell(r.data.allowOutOfStockSales)).catch(() => {});
   }, []);
+
+  // The picked customer's own prices.
+  useEffect(() => {
+    if (!form.customerId) return setCustPrices(NO_PRICES);
+    let live = true;
+    api
+      .get(`/customers/${form.customerId}/prices`)
+      .then((r) => {
+        if (!live) return;
+        const products = new Map();
+        const matrices = new Map();
+        for (const x of r.data) (x.productId ? products : matrices).set(x.productId || x.matrixId, Number(x.price));
+        setCustPrices({ products, matrices });
+      })
+      .catch(() => live && setCustPrices(NO_PRICES));
+    return () => {
+      live = false;
+    };
+  }, [form.customerId]);
+
+  // Editing: load the invoice into the form.
+  useEffect(() => {
+    if (!editing) return;
+    api
+      .get(`/invoices/${editId}/edit`)
+      .then(({ data }) => {
+        const byId = new Map(data.products.map((p) => [p.id, p]));
+        origQty.current = new Map();
+        for (const it of data.items) origQty.current.set(it.productId, (origQty.current.get(it.productId) || 0) + Number(it.quantity));
+        setNumber(data.invoiceNumber);
+        setForm({
+          invoiceDate: String(data.invoiceDate).slice(0, 10),
+          dueDate: data.dueDate ? String(data.dueDate).slice(0, 10) : '',
+          customerId: data.customerId || '',
+          customerName: data.customerName || '',
+          customerEmail: data.customerEmail || '',
+          customerPhone: data.customerPhone || '',
+          customerAddress: data.customerAddress || '',
+          priceLevel: data.priceLevel || 'selling',
+          notes: data.notes || '',
+          status: data.status,
+        });
+        setRows(
+          data.items.map((it) => {
+            const p = byId.get(it.productId) || { id: it.productId, name: it.name, barcode: it.barcode, quantity: 0, missing: true };
+            return { ...newRow(), product: p, matrixId: p.matrix?.id, description: it.description || '', quantity: it.quantity, rate: it.rate, source: 'saved' };
+          }),
+        );
+        setEditInfo({ paidAmount: Number(data.paidAmount) || 0, status: data.status });
+      })
+      .catch((e) => setLoadError(e.message));
+  }, [editing, editId]);
 
   // Barcode scanning (see BarcodeScan.jsx): each scan adds 1 of the item, or a popup says why it couldn't.
   const [scanMode, setScanMode] = useStoredFlag('billing_scan_mode', true);
@@ -788,21 +896,37 @@ export default function InvoiceCreate() {
     if (scanMode && !scanProblem) scanBoxRef.current?.focus();
   }, [scanMode, scanProblem]);
 
-  useEffect(() => {
+  const loadNextNumber = () =>
     api.get('/invoices/next-number').then((r) => {
       setNumber(r.data.invoiceNumber);
     }).catch(() => {});
-  }, []);
+  useEffect(() => {
+    if (!editing) loadNextNumber();
+  }, [editing]);
 
   const level = LEVELS.find((l) => l.value === form.priceLevel);
+  // Payments belong to the invoice's customer, so after one the customer stays.
+  const customerLocked = editing && (editInfo?.paidAmount || 0) > 0;
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setRow = (key, patch) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
 
-  // Changing the price level re-prices every line from the product's matching price.
+  // The price for a product on this invoice: the customer's own (product, then its matrix item), else the level's.
+  const priceOf = (p, matrixId = p.matrix?.id, field = level.field, prices = custPrices) => {
+    const own = prices.products.get(p.id) ?? (matrixId ? prices.matrices.get(matrixId) : undefined);
+    return own !== undefined ? { rate: own, source: 'customer' } : { rate: Number(p[field]), source: 'level' };
+  };
+
+  // New customer prices (customer picked or cleared): re-price the lines that were priced automatically.
+  useEffect(() => {
+    setRows((rs) => rs.map((r) => (r.product && (r.source === 'level' || r.source === 'customer') ? { ...r, ...priceOf(r.product, r.matrixId) } : r)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [custPrices]);
+
+  // Changing the price level re-prices every line (the customer's own prices still win).
   const changeLevel = (value) => {
     const field = LEVELS.find((l) => l.value === value).field;
     setForm((f) => ({ ...f, priceLevel: value }));
-    setRows((rs) => rs.map((r) => (r.product ? { ...r, rate: Number(r.product[field]) } : r)));
+    setRows((rs) => rs.map((r) => (r.product ? { ...r, ...priceOf(r.product, r.matrixId, field) } : r)));
   };
 
   const pickCustomer = (c) => {
@@ -834,7 +958,7 @@ export default function InvoiceCreate() {
       toast.info(`${same.product.name}: quantity +1`, { autoClose: 1200 });
       return true;
     }
-    setRow(key, { product: p, rate: Number(p[level.field]), description: p.description || '' });
+    setRow(key, { product: p, matrixId: p.matrix?.id, ...priceOf(p), description: p.description || '' });
     return false;
   };
 
@@ -854,7 +978,7 @@ export default function InvoiceCreate() {
               (product.barcode && r.product.barcode === product.barcode)),
         );
         if (i >= 0) next[i] = { ...next[i], quantity: (Number(next[i].quantity) || 0) + quantity };
-        else fresh.push({ ...newRow(), product, quantity, rate: Number(product[level.field]), description: product.description || '' });
+        else fresh.push({ ...newRow(), product, quantity, matrixId: grid.matrixId, ...priceOf(product, grid.matrixId), description: product.description || '' });
       }
       const at = next.findIndex((r) => r.key === grid.rowKey);
       if (at >= 0 && !next[at].product && fresh.length) next.splice(at, 1, ...fresh);
@@ -885,7 +1009,7 @@ export default function InvoiceCreate() {
   const addScanned = (p) => {
     const line = rowsRef.current.find((r) => isSameItem(r, p));
     const qty = (line ? Number(line.quantity) || 0 : 0) + 1;
-    const stock = Number((line?.product || p).quantity);
+    const stock = stockOf(line?.product || p);
     if (!allowOversell && qty > stock) {
       scanFailed({ kind: 'noStock', code: p.barcode, name: p.name, stock }, `${p.name}: ${t('scan.only', 'only')} ${stock} ${t('scan.in_stock', 'in stock')}`);
       return;
@@ -893,7 +1017,7 @@ export default function InvoiceCreate() {
     const apply = (rs) => {
       const i = rs.findIndex((r) => isSameItem(r, p));
       if (i >= 0) return rs.map((r, j) => (j === i ? { ...r, quantity: (Number(r.quantity) || 0) + 1 } : r));
-      const added = { ...newRow(), product: p, rate: Number(p[level.field]), description: p.description || '' };
+      const added = { ...newRow(), product: p, matrixId: p.matrix?.id, ...priceOf(p), description: p.description || '' };
       const empty = rs.findIndex((r) => !r.product);
       if (empty >= 0) return rs.map((r, j) => (j === empty ? { ...added, key: r.key } : r));
       return [...rs, added];
@@ -901,7 +1025,7 @@ export default function InvoiceCreate() {
     rowsRef.current = apply(rowsRef.current); // a fast second scan must see this one before React re-renders
     setRows(apply);
     if (scanSound) beep(true);
-    setScanStatus({ ok: true, text: `✓ ${p.name} × ${qty} · ${money(line ? line.rate : p[level.field])}` });
+    setScanStatus({ ok: true, text: `✓ ${p.name} × ${qty} · ${money(line ? line.rate : priceOf(p).rate)}` });
   };
 
   const lookupScan = async (code) => {
@@ -972,20 +1096,26 @@ export default function InvoiceCreate() {
     if (!filled) return;
     setSaving(true);
     const activePayment = overridePayment !== undefined ? overridePayment : payment;
+    const items = filled.map((l) => ({
+      productId: l.product.id,
+      description: l.description,
+      quantity: Number(l.quantity),
+      rate: Number(l.rate),
+    }));
     try {
-      const { data } = await api.post('/invoices', {
-        ...form,
-        payment: activePayment,
-        items: filled.map((l) => ({
-          productId: l.product.id,
-          description: l.description,
-          quantity: Number(l.quantity),
-          rate: Number(l.rate),
-        })),
-      });
+      if (editing) {
+        // Payments are not part of an edit: they are recorded on the invoice page.
+        const r = await api.put(`/invoices/${editId}`, { ...form, items });
+        toast.success(r.message || `Invoice ${number} updated`);
+        navigate(`/admin/invoices/view/${editId}`);
+        return;
+      }
+      const { data } = await api.post('/invoices', { ...form, payment: activePayment, items });
       toast.success(`Invoice ${data.invoiceNumber} created`);
       setPaymentModalOpen(false);
-      navigate(`/admin/invoices/view/${data.id}`);
+      // Staff who can make invoices but not open the invoice list print it from here.
+      if (can('invoices', 'view')) navigate(`/admin/invoices/view/${data.id}`);
+      else setSaved({ id: data.id, invoiceNumber: data.invoiceNumber, total: Number(data.total), customerName: data.customerName });
     } catch (err) {
       const mapped = {};
       for (const [k, v] of Object.entries(err.errors || {})) {
@@ -1007,6 +1137,17 @@ export default function InvoiceCreate() {
     handleSave();
   };
 
+  // After a create-only cashier's invoice: a clean form for the next customer.
+  const startNext = () => {
+    setSaved(null);
+    setForm({ ...EMPTY_FORM, invoiceDate: today() });
+    setRows([newRow()]);
+    setPayment(EMPTY_PAYMENT);
+    setErrors({});
+    setScanStatus(null);
+    loadNextNumber();
+  };
+
   const handleSaveUnpaid = (e) => {
     if (e) e.preventDefault();
     handleSave({
@@ -1026,18 +1167,29 @@ export default function InvoiceCreate() {
     });
   };
 
+  if (loadError) {
+    return (
+      <div className="p-6 text-center">
+        <p className="text-red-600 font-semibold">{loadError}</p>
+        <button type="button" onClick={() => navigate(`/admin/invoices/view/${editId}`)} className="text-purple-600 text-sm mt-2 cursor-pointer">
+          ← Back to the invoice
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="md:p-4 min-h-screen border border-gray-200 rounded">
       <form onSubmit={handleDone}>
         <div className="max-w-7xl mx-auto space-y-4 p-2">
           <div className="flex justify-between items-center mb-2">
-            <h1 className="text-2xl font-bold text-gray-950 ">{t('inv.new_invoice', 'New Invoice')}</h1>
+            <h1 className="text-2xl font-bold text-gray-950 ">{editing ? `${t('inv.edit_invoice', 'Edit Invoice')} ${number}` : t('inv.new_invoice', 'New Invoice')}</h1>
             <Logo kind="invoice" alt="" />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 w-full">
             <div>
               <label className="block text-sm font-medium text-gray-900">{t('inv.invoice_number', 'Invoice Number')}</label>
-              <input readOnly value={number} className={`${fieldCls} mt-1 bg-gray-50`} title="Assigned automatically when saved" />
+              <input readOnly value={number} className={`${fieldCls} mt-1 bg-gray-50`} title={editing ? 'The invoice number stays the same' : 'Assigned automatically when saved'} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">
@@ -1063,6 +1215,7 @@ export default function InvoiceCreate() {
             </div>
           </div>
 
+          {!editing && (
           <div className="bg-white p-4 rounded-lg border border-gray-200 flex flex-wrap items-center gap-4">
             <label className="text-sm font-medium text-gray-700">{t('inv.status', 'Payment Status')}</label>
             {['unpaid', 'paid'].map((s) => (
@@ -1072,6 +1225,7 @@ export default function InvoiceCreate() {
               </label>
             ))}
           </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-white p-4 rounded-lg border border-gray-200">
@@ -1088,9 +1242,29 @@ export default function InvoiceCreate() {
                 Bill To <span className="text-red-500">*</span>
               </h3>
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {(can('customers', 'view') || can('invoices', 'create')) && <CustomerPicker onPick={pickCustomer} />}
+                {customerLocked ? (
+                  <p className="sm:col-span-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                    {money(editInfo.paidAmount)} has been paid on this invoice, so its customer can&apos;t be changed. You can still correct the
+                    contact details.
+                  </p>
+                ) : (
+                  (can('customers', 'view') || can('invoices', 'create')) && <CustomerPicker onPick={pickCustomer} />
+                )}
                 <div className="sm:col-span-2">
-                  <input required maxLength={200} placeholder="Customer name *" value={form.customerName} onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value, customerId: '' }))} className={smallCls} />
+                  <input
+                    required
+                    maxLength={200}
+                    placeholder="Customer name *"
+                    value={form.customerName}
+                    readOnly={customerLocked}
+                    onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value, customerId: '' }))}
+                    className={`${smallCls} ${customerLocked ? 'bg-gray-50' : ''}`}
+                  />
+                  {form.customerId && custPrices.products.size + custPrices.matrices.size > 0 && (
+                    <p className="text-xs text-emerald-700 mt-1">
+                      {custPrices.products.size + custPrices.matrices.size} custom price(s) for this customer are applied to matching items
+                    </p>
+                  )}
                   {errors.customerName && <p className="text-xs text-red-600 mt-1">{errors.customerName}</p>}
                 </div>
                 <div>
@@ -1143,9 +1317,9 @@ export default function InvoiceCreate() {
                           onPick={(p) => pickProduct(l.key, p)}
                         />
                         {l.product && (
-                          <p className={`text-xs mt-1 ${Number(l.quantity) > l.product.quantity ? (allowOversell ? 'text-amber-700' : 'text-red-600') : 'text-gray-500'}`}>
-                            {l.product.quantity} {t('prod.in_stock', 'in stock')}
-                            {Number(l.quantity) > l.product.quantity && (allowOversell ? ' · selling more than in stock' : ' · not enough stock')}
+                          <p className={`text-xs mt-1 ${Number(l.quantity) > stockOf(l.product) ? (allowOversell ? 'text-amber-700' : 'text-red-600') : 'text-gray-500'}`}>
+                            {stockOf(l.product)} {editing ? t('inv.available', 'available') : t('prod.in_stock', 'in stock')}
+                            {Number(l.quantity) > stockOf(l.product) && (allowOversell ? ' · selling more than in stock' : ' · not enough stock')}
                           </p>
                         )}
                       </td>
@@ -1172,7 +1346,17 @@ export default function InvoiceCreate() {
                         {errors[`${l.key}.quantity`] && <p className="text-xs text-red-600 mt-1">{errors[`${l.key}.quantity`]}</p>}
                       </td>
                       <td className="px-3 py-3">
-                        <input type="number" min="0" step="0.01" value={l.rate} onChange={(e) => setRow(l.key, { rate: e.target.value })} className={smallCls} />
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={l.rate}
+                          onChange={(e) => setRow(l.key, { rate: e.target.value, source: 'manual' })}
+                          className={`${smallCls} ${l.source === 'customer' ? 'border-emerald-400 bg-emerald-50/40' : ''}`}
+                        />
+                        {l.product && l.source === 'customer' && (
+                          <p className="text-[11px] text-emerald-700 mt-1">{t('inv.customer_price', 'Customer price')}</p>
+                        )}
                       </td>
                       <td className="px-3 py-3 text-right font-bold text-gray-950 pt-5">{money(l.amount)}</td>
                       <td className="px-3 py-3 pt-5">
@@ -1223,17 +1407,47 @@ export default function InvoiceCreate() {
 
             {/* Payment Section (matching handwritten sketch) */}
             <div className="lg:col-span-7">
-              <InvoicePaymentSection
-                total={total}
-                payment={payment}
-                setPayment={setPayment}
-                money={money}
-              />
+              {editing ? (
+                <div className="bg-white p-4 rounded-lg border border-gray-200 text-sm text-gray-700 space-y-1">
+                  <p className="font-bold text-gray-950">{t('inv.payments', 'Payments')}</p>
+                  <p>
+                    Paid so far: <b>{money(editInfo?.paidAmount || 0)}</b>
+                    {editInfo && total > editInfo.paidAmount && <> · still owed after this change: <b>{money(total - editInfo.paidAmount)}</b></>}
+                  </p>
+                  {editInfo && editInfo.paidAmount > total && (
+                    <p className="text-amber-800">
+                      The new total is {money(editInfo.paidAmount - total)} below what was paid.{' '}
+                      {form.customerId ? 'That amount goes to the customer’s credit.' : 'For a walk-in customer this can’t be saved.'}
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-500">Payments aren&apos;t changed here. Record them with “Mark as Paid” on the invoice page.</p>
+                </div>
+              ) : (
+                <InvoicePaymentSection
+                  total={total}
+                  payment={payment}
+                  setPayment={setPayment}
+                  money={money}
+                />
+              )}
             </div>
           </div>
 
+          {editing ? (
           <div className="flex justify-end items-center gap-3 pt-3 border-t border-gray-200">
-            <CancelButton onClick={() => navigate('/admin/invoices')} label={t('action.cancel', 'Cancel')} />
+            <CancelButton onClick={() => navigate(`/admin/invoices/view/${editId}`)} label={t('action.cancel', 'Cancel')} />
+            <button
+              type="button"
+              disabled={saving || !editInfo}
+              onClick={handleDone}
+              className="px-8 py-2.5 text-base font-bold text-white bg-purple-600 hover:bg-purple-700 active:bg-gray-950 rounded-lg shadow-md cursor-pointer transition-colors disabled:opacity-60"
+            >
+              {saving ? t('action.saving', 'Saving...') : t('action.save_changes', 'Save Changes')}
+            </button>
+          </div>
+          ) : (
+          <div className="flex justify-end items-center gap-3 pt-3 border-t border-gray-200">
+            <CancelButton onClick={() => navigate(can('invoices', 'view') ? '/admin/invoices' : '/admin')} label={t('action.cancel', 'Cancel')} />
             <button
               type="button"
               disabled={saving}
@@ -1251,9 +1465,18 @@ export default function InvoiceCreate() {
               {saving ? t('action.saving', 'Saving...') : t('action.done', 'Done')}
             </button>
           </div>
+          )}
         </div>
       </form>
-      <MatrixGridModal matrixId={grid?.matrixId} priceField={level.field} onClose={() => setGrid(null)} onAdd={addFromGrid} allowOversell={allowOversell} />
+      <MatrixGridModal
+        matrixId={grid?.matrixId}
+        priceField={level.field}
+        priceOf={(v) => priceOf(v, grid?.matrixId).rate}
+        onClose={() => setGrid(null)}
+        onAdd={addFromGrid}
+        allowOversell={allowOversell}
+      />
+      <SavedInvoiceModal saved={saved} money={money} onNext={startNext} />
       <ScanProblemModal problem={scanProblem} onClose={() => setScanProblem(null)} canCreate={can('products', 'create')} onCreated={addCreatedProduct} />
     </div>
   );

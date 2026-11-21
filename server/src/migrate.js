@@ -376,6 +376,24 @@ CREATE TABLE IF NOT EXISTS invoice_access (
   PRIMARY KEY (invoice_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS invoice_access_pending_idx ON invoice_access (requested_at) WHERE status = 'requested';
+
+-- A customer's own price for a product, or for a whole matrix item (every flavor of it).
+-- On their invoices it is used before their price level; a product's own row beats its matrix item's.
+CREATE TABLE IF NOT EXISTS customer_prices (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_id  uuid NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  product_id   uuid REFERENCES products(id) ON DELETE CASCADE,
+  matrix_id    uuid REFERENCES product_matrices(id) ON DELETE CASCADE,
+  price        numeric(14,2) NOT NULL CHECK (price >= 0),
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  CHECK ((product_id IS NULL) <> (matrix_id IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS customer_prices_product_uq ON customer_prices (customer_id, product_id) WHERE product_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS customer_prices_matrix_uq ON customer_prices (customer_id, matrix_id) WHERE matrix_id IS NOT NULL;
+
+-- Invoice edits: when and by whom an invoice was last changed after it was created.
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS edited_at timestamptz;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS edited_by uuid REFERENCES users(id) ON DELETE SET NULL;
 `;
 
 async function main() {

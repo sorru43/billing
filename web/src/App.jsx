@@ -67,6 +67,10 @@ function Home() {
     ['settings', '/admin/settings/company-settings'],
   ];
   const first = order.find(([slug]) => can(slug));
+  // A cashier who may only make invoices starts on New Invoice.
+  if ((!first || first[0] !== 'dashboard') && !can('invoices') && can('invoices', 'create')) {
+    return <Navigate to="/admin/invoices/create-invoice" replace />;
+  }
   if (!first) return <Navigate to="/admin/settings/profile" replace />;
   return first[1] ? <Navigate to={first[1]} replace /> : <Dashboard />;
 }
@@ -135,6 +139,7 @@ export default function App() {
               <Route path="invoices" element={g('invoices', <Invoices />)} />
               <Route path="invoices/create-invoice" element={g('invoices', <InvoiceCreate />, 'create')} />
               <Route path="invoices/view/:id" element={g('invoices', <InvoiceView />)} />
+              <Route path="invoices/edit/:id" element={g('invoices', <InvoiceCreate />, 'edit')} />
               <Route
                 path="import-export"
                 element={

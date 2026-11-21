@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { ArrowLeft, Download, KeyRound, Lock, Mail, Printer, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, KeyRound, Lock, Mail, Pencil, Printer, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, formatDate, Logo } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
@@ -147,6 +147,11 @@ export default function InvoiceView() {
             <Mail size={16} /> Email
           </button>
           {can('invoices', 'edit') && (
+            <button onClick={() => navigate(`/admin/invoices/edit/${id}`)} className={`${btn} border border-gray-300 text-gray-700 hover:bg-gray-50`}>
+              <Pencil size={16} /> Edit
+            </button>
+          )}
+          {can('invoices', 'edit') && (
             inv.status === 'paid' ? (
               isAdmin && (
                 <button
@@ -202,6 +207,9 @@ export default function InvoiceView() {
           <div className="text-right">
             <h1 className="text-2xl font-bold text-gray-950">INVOICE</h1>
             <p className="text-sm text-gray-600">{inv.invoiceNumber}</p>
+            {inv.editedAt && (
+              <p className="text-[11px] text-gray-400 no-print">Edited {new Date(inv.editedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
+            )}
             <div className="mt-1">
               <StatusBadge status={inv.status} />
             </div>

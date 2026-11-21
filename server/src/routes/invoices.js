@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query, tx } from '../db.js';
-import { requirePerm, requireSuperAdmin } from '../auth.js';
+import { requirePerm, requireSuperAdmin, can } from '../auth.js';
 import { config } from '../config.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 import { getSetting } from '../settings.js';
@@ -9,7 +9,7 @@ import { invoicePdf } from '../pdf.js';
 import { invoiceEmail, startRetentionWindow } from '../archive.js';
 import { receiveCustomerPayment, useCustomerCredit } from '../balance.js';
 import {
-  LOCKED_MESSAGE, seesAllInvoices, lockState, openWindow, closeAfterPrint, requestAccess, decideRequest, pendingRequests,
+  LOCKED_MESSAGE, seesAllInvoices, lockState, openWindow, closeAfterPrint, requestAccess, decideRequest, pendingRequests, hasOpenWindow,
 } from '../invoiceAccess.js';
 
 const r = Router();
@@ -85,6 +85,7 @@ const fullOut = (i) => ({
   discountTotal: i.discount_total,
   taxTotal: i.tax_total,
   notes: i.notes,
+  editedAt: i.edited_at || null,
 });
 
 // What a locked-out cashier may see: enough to recognise the invoice and ask for access.
@@ -97,6 +98,54 @@ const lockedOut = (i, request) => ({
   locked: true,
   accessRequest: request || null,
 });
+
+// Invoice lines and totals from the posted rows. Totals are always computed here; the screen's are display only.
+function buildLines(b, byId) {
+  let subtotal = 0, discountTotal = 0, taxTotal = 0;
+  const items = b.items.map((it) => {
+    const p = byId.get(it.productId);
+    const gross = round2(it.quantity * it.rate);
+    const discount = Math.min(round2(it.discount), gross);
+    const taxable = gross - discount;
+    const tax = round2((taxable * it.taxRate) / 100);
+    subtotal += gross; discountTotal += discount; taxTotal += tax;
+    return {
+      productId: p.id, name: p.name, barcode: p.barcode || '', description: it.description, quantity: it.quantity,
+      listPrice: Number(p[PRICE_FIELD[b.priceLevel]]), rate: it.rate, discount, taxRate: it.taxRate, tax,
+      amount: round2(taxable + tax),
+    };
+  });
+  return {
+    items,
+    subtotal: round2(subtotal),
+    discountTotal: round2(discountTotal),
+    taxTotal: round2(taxTotal),
+    total: round2(subtotal - discountTotal + taxTotal),
+  };
+}
+
+// Link to the saved customer: the one picked, else a match by email, else by a unique exact name.
+async function resolveCustomer(client, b) {
+  if (b.customerId) {
+    const picked = (await client.query(`SELECT id FROM customers WHERE id=$1`, [b.customerId])).rows[0]?.id;
+    if (picked) return picked;
+  }
+  if (b.customerEmail) {
+    const byEmail = (await client.query(`SELECT id FROM customers WHERE lower(email)=lower($1)`, [b.customerEmail])).rows[0]?.id;
+    if (byEmail) return byEmail;
+  }
+  const m = (await client.query(`SELECT id FROM customers WHERE lower(trim(name))=lower(trim($1)) LIMIT 2`, [b.customerName])).rows;
+  return m.length === 1 ? m[0].id : null;
+}
+
+// Staff who may make invoices but not see the invoice list (create-only cashiers) can still print
+// the one they just made: only while their own window on it is open (invoiceAccess.js).
+async function canOpenInvoice(req, invoiceId) {
+  if (can(req, 'invoices', 'view')) return (await lockState(req, invoiceId)).open;
+  return can(req, 'invoices', 'create') && hasOpenWindow(invoiceId, req.user.id);
+}
+const viewOrCreate = (req, res, next) =>
+  can(req, 'invoices', 'view') || can(req, 'invoices', 'create') ? next() : fail(res, 403, 'You do not have permission to do this');
 
 async function nextNumber(client, peek) {
   const { prefix = 'INV_' } = await getSetting('invoice');
@@ -158,11 +207,11 @@ r.get('/:id', requirePerm('invoices', 'view'), h(async (req, res) => {
   ok(res, { ...fullOut(rows[0]), locked: false, access: lock.restricted ? { viewUntil: lock.viewUntil } : null });
 }));
 
-r.get('/:id/pdf', requirePerm('invoices', 'view'), h(async (req, res) => {
+r.get('/:id/pdf', viewOrCreate, h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
-  if (!(await lockState(req, rows[0].id)).open) return fail(res, 403, LOCKED_MESSAGE);
+  if (!(await canOpenInvoice(req, rows[0].id))) return fail(res, 403, LOCKED_MESSAGE);
   const pdf = await invoicePdf(rows[0], await getSetting('company'));
   await closeAfterPrint(req, rows[0].id); // a PDF download counts as printing it
   res.set({
@@ -195,36 +244,12 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
     });
     if (Object.keys(errors).length) return { errors };
 
-    // Totals are always computed here; client-side totals are display only.
-    let subtotal = 0, discountTotal = 0, taxTotal = 0;
-    const items = b.items.map((it) => {
-      const p = byId.get(it.productId);
-      const gross = round2(it.quantity * it.rate);
-      const discount = Math.min(round2(it.discount), gross);
-      const taxable = gross - discount;
-      const tax = round2((taxable * it.taxRate) / 100);
-      subtotal += gross; discountTotal += discount; taxTotal += tax;
-      return {
-        productId: p.id, name: p.name, barcode: p.barcode || '', description: it.description, quantity: it.quantity,
-        listPrice: Number(p[PRICE_FIELD[b.priceLevel]]), rate: it.rate, discount, taxRate: it.taxRate, tax,
-        amount: round2(taxable + tax),
-      };
-    });
-    const total = round2(subtotal - discountTotal + taxTotal);
+    const { items, subtotal, discountTotal, taxTotal, total } = buildLines(b, byId);
 
     for (const [pid, qty] of needed) {
       await client.query(`UPDATE products SET quantity = quantity - $1, updated_at = now() WHERE id = $2`, [qty, pid]);
     }
-    // Link to the saved customer: the one picked, else a match by email, else by a unique exact name.
-    let customerId = null;
-    if (b.customerId) customerId = (await client.query(`SELECT id FROM customers WHERE id=$1`, [b.customerId])).rows[0]?.id || null;
-    if (!customerId && b.customerEmail) {
-      customerId = (await client.query(`SELECT id FROM customers WHERE lower(email)=lower($1)`, [b.customerEmail])).rows[0]?.id || null;
-    }
-    if (!customerId) {
-      const m = (await client.query(`SELECT id FROM customers WHERE lower(trim(name))=lower(trim($1)) LIMIT 2`, [b.customerName])).rows;
-      if (m.length === 1) customerId = m[0].id;
-    }
+    const customerId = await resolveCustomer(client, b);
     const payEntries = [];
     const notPaid = Boolean(b.payment?.isNotPaid);
     if (b.payment && !notPaid) {
@@ -377,6 +402,140 @@ r.patch('/:id/status', requirePerm('invoices', 'edit'), h(async (req, res) => {
   ok(res, null, 'Invoice status updated');
 }));
 
+// --- Editing a saved invoice -------------------------------------------------------------------
+// Items, prices, dates, notes and price level can change; the invoice number and payments stay.
+// Stock follows the change (old quantities go back, new ones come off). Money already paid stays
+// paid: if the new total is lower, a saved customer gets the extra as credit (used on their other
+// bills first); for a walk-in the edit is refused, since there is nowhere to keep it.
+
+const editProductOut = (p) => ({
+  id: p.id,
+  name: p.name,
+  barcode: p.barcode || '',
+  description: p.description,
+  quantity: p.quantity,
+  selling_price: p.selling_price,
+  top_customer_price: p.top_customer_price,
+  jobber_price: p.jobber_price,
+  status: p.status,
+  matrix: p.matrix_id ? { id: p.matrix_id, name: p.matrix_name, option1: p.option1, option2: p.option2 } : null,
+});
+
+async function returnsFor(db, invoiceId) {
+  return (await db.query(`SELECT return_number FROM returns WHERE invoice_id = $1 ORDER BY created_at`, [invoiceId])).rows.map((x) => x.return_number);
+}
+
+// What the edit screen needs: the invoice plus the current product rows of its lines.
+r.get('/:id/edit', requirePerm('invoices', 'edit'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
+  const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
+  if (!rows.length) return fail(res, 404, 'Invoice not found');
+  const inv = rows[0];
+  if (!(await lockState(req, inv.id)).open) return fail(res, 403, LOCKED_MESSAGE);
+  const returned = await returnsFor({ query }, inv.id);
+  if (returned.length) return fail(res, 422, `Invoice ${inv.invoice_number} has returns (${returned.join(', ')}), so it can't be edited`);
+  const ids = [...new Set((inv.items || []).map((it) => it.productId).filter(Boolean))];
+  const { rows: products } = await query(
+    `SELECT p.*, m.name AS matrix_name FROM products p LEFT JOIN product_matrices m ON m.id = p.matrix_id WHERE p.id = ANY($1::uuid[])`,
+    [ids],
+  );
+  ok(res, { ...fullOut(inv), products: products.map(editProductOut) });
+}));
+
+r.put('/:id', requirePerm('invoices', 'edit'), h(async (req, res) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
+  const b = validate(schema, req.body, res);
+  if (!b) return;
+  const allowOversell = (await getSetting('inventory')).allowOutOfStockSales === true;
+
+  const result = await tx(async (client) => {
+    const inv = (await client.query(`SELECT * FROM invoices WHERE id=$1 FOR UPDATE`, [req.params.id])).rows[0];
+    if (!inv) return { status: 404, message: 'Invoice not found' };
+    if (!(await lockState(req, inv.id)).open) return { status: 403, message: LOCKED_MESSAGE };
+    const returned = await returnsFor(client, inv.id);
+    if (returned.length) return { status: 422, message: `Invoice ${inv.invoice_number} has returns (${returned.join(', ')}), so it can't be edited` };
+
+    const oldQty = new Map();
+    for (const it of inv.items || []) if (it.productId) oldQty.set(it.productId, (oldQty.get(it.productId) || 0) + Number(it.quantity || 0));
+    const newQty = new Map();
+    for (const it of b.items) newQty.set(it.productId, (newQty.get(it.productId) || 0) + it.quantity);
+    const ids = [...new Set([...oldQty.keys(), ...newQty.keys()])];
+    const { rows: products } = await client.query(
+      `SELECT p.*, m.status AS matrix_status FROM products p LEFT JOIN product_matrices m ON m.id = p.matrix_id
+        WHERE p.id = ANY($1::uuid[]) FOR UPDATE OF p`,
+      [ids],
+    );
+    const byId = new Map(products.map((p) => [p.id, p]));
+
+    const errors = {};
+    b.items.forEach((it, idx) => {
+      const p = byId.get(it.productId);
+      const had = oldQty.get(it.productId) || 0;
+      // A product already on the invoice may stay even if it has been turned off since.
+      if (!p || (!had && (!p.status || p.matrix_status === false))) {
+        errors[`items.${idx}.productId`] = 'Product not found or inactive';
+        return;
+      }
+      const want = newQty.get(p.id);
+      const available = p.quantity + had; // this invoice's own quantity comes back first
+      if (!allowOversell && want > had && want > available) errors[`items.${idx}.quantity`] = `Only ${available} of "${p.name}" available`;
+    });
+    if (Object.keys(errors).length) return { status: 422, message: 'Please fix the highlighted items', errors };
+
+    const { items, subtotal, discountTotal, taxTotal, total } = buildLines(b, byId);
+
+    // The saved customer can change only while nothing has been paid (payments belong to that customer).
+    let paid = round2(Number(inv.paid_amount) || 0);
+    const customerId = paid > 0 ? inv.customer_id : await resolveCustomer(client, b);
+    let creditAdded = 0;
+    if (paid > total) {
+      if (!customerId) {
+        return {
+          status: 422,
+          message: `${round2(paid).toFixed(2)} has already been paid on this invoice, so the new total can't be lower than that for a walk-in customer`,
+        };
+      }
+      creditAdded = round2(paid - total);
+      paid = total;
+    }
+    const status = paid >= total && total > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
+
+    for (const id of ids) {
+      const delta = (newQty.get(id) || 0) - (oldQty.get(id) || 0);
+      if (delta && byId.has(id)) await client.query(`UPDATE products SET quantity = quantity - $1, updated_at = now() WHERE id = $2`, [delta, id]);
+    }
+
+    await client.query(
+      `UPDATE invoices SET invoice_date=$1, due_date=$2, customer_name=$3, customer_email=$4, customer_phone=$5, customer_address=$6,
+              price_level=$7, items=$8, subtotal=$9, discount_total=$10, tax_total=$11, total=$12, paid_amount=$13, status=$14,
+              notes=$15, customer_id=$16, edited_at=now(), edited_by=$17
+        WHERE id=$18`,
+      [b.invoiceDate, b.dueDate, b.customerName, b.customerEmail, b.customerPhone, b.customerAddress, b.priceLevel, JSON.stringify(items),
+        subtotal, discountTotal, taxTotal, total, paid, status, b.notes, customerId, req.user.id, inv.id],
+    );
+    await client.query(
+      `UPDATE customer_sales_records SET customer_id=$1, customer_name=$2, invoice_date=$3, total=$4, paid_amount=$5, status=$6, items=$7
+        WHERE invoice_id=$8`,
+      [customerId, b.customerName, b.invoiceDate, total, paid, status, JSON.stringify(items), inv.id],
+    );
+    if (status === 'paid' && inv.status !== 'paid') await startRetentionWindow(client, inv.id);
+
+    if (customerId) {
+      if (creditAdded > 0) await client.query(`UPDATE customers SET credit_balance = credit_balance + $1 WHERE id = $2`, [creditAdded, customerId]);
+      // Their credit (including any just added) pays this invoice first, then their oldest open bills.
+      await useCustomerCredit(client, customerId, inv.id);
+    }
+    const saved = (await client.query(`SELECT * FROM invoices WHERE id=$1`, [inv.id])).rows[0];
+    return { invoice: saved, creditAdded };
+  });
+
+  if (!result.invoice) return fail(res, result.status, result.message, result.errors);
+  const msg = result.creditAdded > 0
+    ? `Invoice updated. ${result.creditAdded.toFixed(2)} paid above the new total went to the customer's credit`
+    : 'Invoice updated';
+  ok(res, { ...fullOut(result.invoice), creditAdded: result.creditAdded }, msg);
+}));
+
 // Send the invoice to the customer (or another address).
 r.post('/:id/email', requirePerm('invoices', 'view'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
@@ -395,10 +554,9 @@ r.post('/:id/email', requirePerm('invoices', 'view'), h(async (req, res) => {
 }));
 
 // The Print button calls this before opening the print dialog: a locked-out cashier's window closes.
-r.post('/:id/printed', requirePerm('invoices', 'view'), h(async (req, res) => {
+r.post('/:id/printed', viewOrCreate, h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
-  const lock = await lockState(req, req.params.id);
-  if (!lock.open) return fail(res, 403, LOCKED_MESSAGE);
+  if (!(await canOpenInvoice(req, req.params.id))) return fail(res, 403, LOCKED_MESSAGE);
   await closeAfterPrint(req, req.params.id);
   ok(res, null, 'Printed');
 }));
