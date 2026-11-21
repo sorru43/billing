@@ -25,9 +25,12 @@ const smallCls =
 
 // hideMatrix: list only sellable rows (variants by name), e.g. when receiving stock.
 export function ProductPicker({ value, onPick, error, hideMatrix = false }) {
+  const { t } = useI18n();
   const [q, setQ] = useState(value?.name || '');
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState([]);
+  // A barcode that is no product but is on the store's barcode list: what the item is.
+  const [listed, setListed] = useState(null);
   const debounced = useDebounced(q, 200);
   const ref = useRef(null);
   const inputRef = useRef(null);
@@ -56,6 +59,7 @@ export function ProductPicker({ value, onPick, error, hideMatrix = false }) {
   const pick = (p) => {
     const merged = onPick(p);
     setOpen(false);
+    setListed(null);
     if (p.isMatrix || merged) setQ(value?.name || '');
   };
   useEffect(() => {
@@ -81,18 +85,33 @@ export function ProductPicker({ value, onPick, error, hideMatrix = false }) {
         onChange={(e) => {
           setQ(e.target.value);
           setOpen(true);
+          setListed(null);
         }}
         onKeyDown={async (e) => {
           // Barcode scanners type the code and press Enter: pick an exact match straight away.
           if (e.key === 'Enter') {
             e.preventDefault();
+            const code = q.trim();
             const r = await api.get('/products/search', { q }).catch(() => null);
             const found = (r?.data || []).filter((p) => !hideMatrix || !p.isMatrix);
-            const exact = found.find((p) => p.barcode && p.barcode === q.trim()) || (found.length === 1 ? found[0] : null);
+            const exact = found.find((p) => p.barcode && p.barcode === code) || (found.length === 1 ? found[0] : null);
             if (exact) pick(exact);
+            else if (!found.length && /^[0-9]{6,14}$/.test(code)) {
+              // Not a product: the barcode list may still know it. Users without scan access just get nothing.
+              const s = await api.get('/products/scan', { code }).catch(() => null);
+              setListed(s?.data?.listed || null);
+              if (s?.data?.listed) setOpen(false); // the empty "No products found" list would cover the note
+            }
           }
         }}
       />
+      {listed && (
+        <p className="mt-1 text-xs text-purple-700">
+          {t('scan.not_in_products', 'Not in your products')}: <span className="font-semibold">{listed.name}</span>
+          {[listed.brand, listed.size].filter(Boolean).length > 0 && <span className="text-gray-500"> · {[listed.brand, listed.size].filter(Boolean).join(' · ')}</span>}
+          <span className="text-gray-500"> ({t('scan.from_list', 'from your barcode list')})</span>
+        </p>
+      )}
       {open && pos && (
         <div
           style={{ top: pos.top, left: pos.left }}
@@ -896,6 +915,9 @@ export default function InvoiceCreate() {
         addScanned(data.product);
       } else if (data.inactive) {
         scanFailed({ kind: 'inactive', code, name: data.name }, `${data.name}: ${t('scan.inactive', 'Product is turned off')}`);
+      } else if (data.listed) {
+        // On the store's barcode list (reference only): say what the item is.
+        scanFailed({ kind: 'notFound', code, listed: data.listed }, `${t('scan.not_in_products', 'Not in your products')}: ${data.listed.name} (${code})`);
       } else {
         scanFailed({ kind: 'notFound', code }, `${t('scan.not_found', 'Product not found')}: ${code}`);
       }

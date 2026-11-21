@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { api } from '../api.js';
-import { useLocation } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { useAuth, logoUrl } from '../auth.jsx';
 import { Field, Loader, SubmitButton, Toggle, inputCls } from '../components/ui.jsx';
 
@@ -198,6 +198,26 @@ function BarcodeLookupSettings({ editable }) {
       ) : (
         <>
           <ol className="divide-y divide-gray-100 border border-gray-200 rounded-md">
+            {/* The store's own list: always asked first, free, managed under Import & Export. */}
+            <li className="p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-bold text-gray-400">0.</span>
+                <span className="font-semibold text-gray-950">Your barcode list</span>
+                <span
+                  className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${data.list?.count ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}
+                >
+                  {data.list?.count ? `${data.list.count.toLocaleString()} barcodes` : 'Empty'}
+                </span>
+                <span className="text-xs text-purple-700 font-medium">Free</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Barcodes you imported (reference only, never products or stock). Always asked first. Manage it under{' '}
+                <Link to="/admin/import-export" className="text-purple-700 hover:underline font-medium">
+                  Import &amp; Export → Barcode List
+                </Link>
+                .
+              </p>
+            </li>
             {data.sources.map((s, i) => {
               const e = edits[s.id] || {};
               const needsKey = s.key === 'required' && !e.apiKey;

@@ -8,6 +8,7 @@ import { requireAuth, csrfGuard } from './auth.js';
 import { purgeExpiredInvoices } from './archive.js';
 import authRoutes from './routes/auth.js';
 import productRoutes from './routes/products.js';
+import barcodeListRoutes from './routes/barcodeList.js';
 import matrixRoutes from './routes/matrices.js';
 import categoryRoutes from './routes/categories.js';
 import brandRoutes from './routes/brands.js';
@@ -60,6 +61,7 @@ api.use('/branding', brandingRoutes); // public: logos
 api.use(requireAuth); // everything below needs a session
 api.use('/dashboard', dashboardRoutes);
 api.use('/products', productRoutes);
+api.use('/barcode-list', barcodeListRoutes);
 api.use('/matrices', matrixRoutes);
 api.use('/categories', categoryRoutes);
 api.use('/brands', brandRoutes);

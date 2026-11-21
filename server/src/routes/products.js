@@ -6,7 +6,7 @@ import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '.
 import { toCsv } from '../pdf.js';
 import { ALERT_SQL, DEFAULT_ALERT } from '../stock.js';
 import { parseCsv } from './customers.js';
-import { lookupBarcode, LookupError } from '../barcodeLookup.js';
+import { lookupBarcode, LookupError, barcodeVariants, findInBarcodeList } from '../barcodeLookup.js';
 
 const r = Router();
 
@@ -116,15 +116,16 @@ r.get('/scan', h(async (req, res) => {
   if (!can(req, 'invoices', 'create') && !can(req, 'products', 'view') && !can(req, 'receiving', 'create')) return fail(res, 403, 'You do not have permission to do this');
   const code = String(req.query.code || '').trim().slice(0, 64);
   if (!code) return fail(res, 422, 'Scan or enter a barcode');
-  const codes = [code];
-  if (/^\d{12}$/.test(code)) codes.push(`0${code}`);
-  if (/^0\d{12}$/.test(code)) codes.push(code.slice(1));
   const { rows } = await query(
     `${SELECT} WHERE p.barcode = ANY($1::text[]) ORDER BY (p.status AND (p.matrix_id IS NULL OR m.status)) DESC, (p.barcode = $2) DESC LIMIT 1`,
-    [codes, code],
+    [barcodeVariants(code), code],
   );
   const p = rows[0];
-  if (!p) return ok(res, { product: null, inactive: false });
+  if (!p) {
+    // Not a product: say what it is when the store's barcode list has it (reference only, no stock).
+    const l = await findInBarcodeList(code);
+    return ok(res, { product: null, inactive: false, listed: l && { barcode: l.barcode, name: l.name, brand: l.brand, size: l.size, image: l.image } });
+  }
   const active = p.status && (!p.matrix_id || p.matrix_status);
   ok(res, active ? { product: out(p), inactive: false } : { product: null, inactive: true, name: p.name });
 }));

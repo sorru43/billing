@@ -11,6 +11,7 @@ import {
   Info,
   RefreshCw,
   Upload,
+  ScanBarcode,
   AlertCircle,
   X,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
 import { CancelButton, SubmitButton } from '../components/ui.jsx';
 import { fileToCsv, downloadProductsTemplate, downloadCustomersTemplate } from '../spreadsheet.js';
+import BarcodeListCard from '../components/BarcodeListCard.jsx';
 
 export default function ImportExport() {
   const { can } = useAuth();
@@ -31,7 +33,9 @@ export default function ImportExport() {
   const canCustomersCreate = can('customers', 'create') && can('import_export', 'create');
   const canCustomersEdit = can('customers', 'edit') && can('import_export', 'create');
 
-  const initialTab = canProductsView ? 'products' : 'customers';
+  const canBarcodeList = can('import_export', 'view');
+
+  const initialTab = canProductsView ? 'products' : canCustomersView ? 'customers' : 'barcodes';
   const [tab, setTab] = useState(initialTab);
 
   // Counts
@@ -173,7 +177,7 @@ export default function ImportExport() {
         <div>
           <h1 className="text-2xl font-bold text-gray-950">Import & Export Center</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Bulk export and import products and customer accounts via CSV or Excel spreadsheets
+            Bulk export and import products and customer accounts, and import a reference barcode list, via CSV or Excel spreadsheets
           </p>
         </div>
         <button
@@ -227,8 +231,25 @@ export default function ImportExport() {
           </button>
         )}
       </div>
+        {canBarcodeList && (
+          <button
+            type="button"
+            onClick={() => setTab('barcodes')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors cursor-pointer ${
+              tab === 'barcodes'
+                ? 'border-purple-600 text-purple-600 bg-purple-50/50 rounded-t-md'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            <ScanBarcode size={18} />
+            <span>Barcode List</span>
+          </button>
+        )}
 
       {/* TAB 1: PRODUCTS */}
+      {/* TAB 3: BARCODE LIST (reference only, never inventory) */}
+      {tab === 'barcodes' && canBarcodeList && <BarcodeListCard />}
+
       {tab === 'products' && canProductsView && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Export Card */}

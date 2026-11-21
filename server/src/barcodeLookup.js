@@ -23,6 +23,49 @@ const isMasked = (key) => String(key || '').includes('•');
 
 export const normalizeBarcode = (raw) => String(raw || '').trim().replace(/[^0-9A-Za-z]/g, '');
 
+// A 12-digit UPC and its 13-digit EAN form (leading 0) are the same code, so either matches.
+export function barcodeVariants(code) {
+  const codes = [code];
+  if (/^\d{12}$/.test(code)) codes.push(`0${code}`);
+  if (/^0\d{12}$/.test(code)) codes.push(code.slice(1));
+  return codes;
+}
+
+// The store's imported barcode list (reference data, never products or stock).
+export async function findInBarcodeList(rawCode) {
+  const code = String(rawCode || '').trim().slice(0, 64);
+  if (!code) return null;
+  const { rows } = await query(
+    `SELECT barcode, name, brand, category, size, image FROM barcode_list
+      WHERE barcode = ANY($1::text[]) ORDER BY (barcode = $2) DESC LIMIT 1`,
+    [barcodeVariants(code), code],
+  );
+  return rows[0] || null;
+}
+
+export async function barcodeListStats() {
+  const { rows } = await query(`SELECT count(*)::int AS count, max(imported_at) AS imported_at FROM barcode_list`);
+  return { count: rows[0].count, importedAt: rows[0].imported_at };
+}
+
+export const LIST_SOURCE_LABEL = 'Your barcode list';
+
+// Same shape as the lookup sources' products (toProduct in barcodeProviders.js).
+const listProduct = (row) => ({
+  barcode: row.barcode,
+  name: row.name,
+  brand: row.brand,
+  manufacturer: '',
+  model: '',
+  category: row.category,
+  description: row.size ? `Size: ${row.size}` : '',
+  size: row.size,
+  images: row.image ? [row.image] : [],
+  image: row.image,
+  mpn: '',
+  asin: '',
+});
+
 // Stored as settings.barcode_lookup = { sources: { [id]: { enabled, apiKey } } }.
 // Older installs stored only { apiKey } for barcodelookup.com; that key (or the
 // BARCODE_LOOKUP_API_KEY env var) still applies until a new one is saved.
@@ -57,6 +100,7 @@ export async function getLookupSettings() {
       apiKey: maskApiKey(s.apiKey),
     })),
     saved: { found: rows[0].found, notFound: rows[0].not_found },
+    list: await barcodeListStats(),
   };
 }
 
@@ -91,6 +135,9 @@ const labelOf = (id) => SOURCES.find((s) => s.id === id)?.label || id;
 export async function lookupBarcode(rawBarcode) {
   const barcode = normalizeBarcode(rawBarcode);
   if (!barcode) throw new LookupError('Please enter a valid barcode to lookup.', 'INVALID_BARCODE');
+  // The store's own list first: free, instant, and it works with every outside source turned off.
+  const listed = await findInBarcodeList(barcode);
+  if (listed) return { found: true, barcode, product: listProduct(listed), source: LIST_SOURCE_LABEL, cached: true };
   // Barcodes starting with 2 are in-store codes (the Generate button makes these too); no public
   // database has them, so don't spend lookups on them.
   if (/^2\d{11,12}$/.test(barcode)) {

@@ -182,7 +182,8 @@ const fieldCls = 'mt-1 h-10 w-full rounded-md border border-gray-300 px-3 text-s
 
 // Quick add for a barcode that isn't in the catalog yet. Only the basics a cashier knows;
 // the other prices start at the selling price and can be changed later under Products.
-function QuickAddProduct({ code, onBack, onCreated }) {
+// autoFill: the barcode is on the store's barcode list, so fill in from it straight away.
+function QuickAddProduct({ code, onBack, onCreated, autoFill = false }) {
   const { t } = useI18n();
   const [form, setForm] = useState({ name: '', category_id: '', selling_price: '', quantity: '1', cost: '' });
   const [categories, setCategories] = useState(null);
@@ -213,6 +214,11 @@ function QuickAddProduct({ code, onBack, onCreated }) {
       setLookingUp(false);
     }
   };
+
+  useEffect(() => {
+    if (autoFill) lookup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const save = async (e) => {
     e.preventDefault();
@@ -324,9 +330,9 @@ export function ScanProblemModal({ problem, onClose, canCreate, onCreated }) {
   }, [problem, adding, onClose]);
   if (!problem) return null;
 
-  const { kind, code } = problem;
+  const { kind, code, listed } = problem;
   const title = {
-    notFound: t('scan.not_found', 'Product not found'),
+    notFound: listed ? t('scan.not_in_products', 'Not in your products') : t('scan.not_found', 'Product not found'),
     inactive: t('scan.inactive', 'Product is turned off'),
     noStock: t('scan.no_stock', 'Not enough stock'),
     error: t('scan.failed', 'Scan failed'),
@@ -335,7 +341,53 @@ export function ScanProblemModal({ problem, onClose, canCreate, onCreated }) {
   if (adding) {
     return (
       <Modal isOpen onClose={onClose} title={t('scan.add_title', 'Add new product')} size="xl">
-        <QuickAddProduct code={code} onBack={() => setAdding(false)} onCreated={onCreated} />
+        <QuickAddProduct code={code} onBack={() => setAdding(false)} onCreated={onCreated} autoFill={Boolean(listed)} />
+      </Modal>
+    );
+  }
+
+  if (kind === 'notFound' && listed) {
+    const details = [listed.brand, listed.size].filter(Boolean).join(' · ');
+    return (
+      <Modal isOpen onClose={onClose} title={title} size="md">
+        <div className="flex gap-3 rounded-md border border-purple-200 bg-purple-50/60 p-3">
+          {listed.image ? (
+            <img src={listed.image} alt="" className="h-20 w-20 shrink-0 rounded-md border border-gray-200 bg-white object-contain" />
+          ) : (
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-400">
+              <ScanBarcode size={28} />
+            </div>
+          )}
+          <div className="min-w-0 space-y-1 text-sm">
+            <p className="font-bold leading-snug text-gray-950">{listed.name}</p>
+            {details && <p className="text-gray-700">{details}</p>}
+            <p className="font-mono text-xs text-gray-500">{code}</p>
+            <p className="text-xs font-medium text-purple-700">{t('scan.listed_note', 'From your barcode list. It is not one of your products, so it has no price or stock.')}</p>
+          </div>
+        </div>
+        <div className="mt-3 space-y-1 text-sm text-gray-700">
+          {!canCreate && <p className="text-gray-500">{t('scan.ask_manager', 'Ask a manager to add it under Products, or search for the item by name.')}</p>}
+          <p className="text-xs text-gray-500">{t('scan.next_closes', 'Scanning the next item closes this message.')}</p>
+        </div>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {canCreate && (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded-md hover:bg-purple-100 cursor-pointer"
+            >
+              <PackagePlus size={16} /> {t('scan.add_product', 'Add as new product')}
+            </button>
+          )}
+          <button
+            type="button"
+            autoFocus
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-bold text-white bg-purple-600 rounded-md hover:bg-purple-700 cursor-pointer"
+          >
+            {t('scan.continue', 'Continue scanning')}
+          </button>
+        </div>
       </Modal>
     );
   }

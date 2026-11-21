@@ -349,6 +349,19 @@ CREATE TABLE IF NOT EXISTS barcode_lookups (
   looked_up_at  timestamptz NOT NULL DEFAULT now()
 );
 
+-- Barcode list: reference data the store imports (e.g. a supplier's or Open Food Facts list).
+-- Never products or stock: a scan that matches no product shows what the item is from here,
+-- and barcode lookups check it first.
+CREATE TABLE IF NOT EXISTS barcode_list (
+  barcode      text PRIMARY KEY,
+  name         text NOT NULL,
+  brand        text NOT NULL DEFAULT '',
+  category     text NOT NULL DEFAULT '',
+  size         text NOT NULL DEFAULT '',
+  image        text NOT NULL DEFAULT '',
+  imported_at  timestamptz NOT NULL DEFAULT now()
+);
+
 -- Cashier invoice lock: staff without the "See past invoices" permission can open an invoice only
 -- while they hold an open window for it (right after creating it, or after an admin approves a request).
 -- status: requested | approved | declined. An approved window is open while view_until is in the future.

@@ -222,6 +222,9 @@ export const translations = {
     'scan.save_add': 'Save & add to invoice',
     'scan.saved_not_found': 'Product saved, but it could not be added. Scan it again.',
     'scan.created': 'product added to the catalog',
+    'scan.not_in_products': 'Not in your products',
+    'scan.from_list': 'from your barcode list',
+    'scan.listed_note': 'From your barcode list. It is not one of your products, so it has no price or stock.',
   },
   fr: {
     // Navigation & Main
@@ -438,6 +441,9 @@ export const translations = {
     'scan.save_add': 'Enregistrer et ajouter à la facture',
     'scan.saved_not_found': "Produit enregistré, mais il n'a pas pu être ajouté. Scannez-le à nouveau.",
     'scan.created': 'produit ajouté au catalogue',
+    'scan.not_in_products': 'Pas dans vos produits',
+    'scan.from_list': 'de votre liste de codes-barres',
+    'scan.listed_note': "Dans votre liste de codes-barres. Ce n'est pas un de vos produits : il n'a ni prix ni stock.",
   },
 };
 
