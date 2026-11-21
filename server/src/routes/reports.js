@@ -208,10 +208,13 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
   const unpaidCount = rows.filter((r) => r.status === 'unpaid').length;
   const deletedInvoicesCount = rows.filter((r) => r.invoice_deleted || !r.active_invoice_id).length;
 
+  // One key per customer: the saved customer, else the typed name (walk-ins with the same name group together).
+  const customerKey = (r) => (r.customer_id ? `id:${r.customer_id}` : `name:${String(r.customer_name || '').trim().toLowerCase()}`);
   const sales = rows.map((r) => ({
     id: r.id,
     invoiceId: r.active_invoice_id || null,
     invoiceNumber: r.invoice_number,
+    customerKey: customerKey(r),
     customerId: r.customer_id,
     customerName: r.customer_name,
     invoiceDate: typeof r.invoice_date === 'string' ? r.invoice_date.slice(0, 10) : new Date(r.invoice_date).toISOString().slice(0, 10),
@@ -225,8 +228,30 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
     createdAt: r.created_at,
   }));
 
+  // Per customer for the period: what they bought, paid and still owe (the report's main table;
+  // clicking a customer shows their invoices from `sales`).
+  const byCustomer = new Map();
+  for (const s of sales) {
+    let c = byCustomer.get(s.customerKey);
+    if (!c) {
+      c = { key: s.customerKey, customerId: s.customerId, customerName: s.customerName, invoiceCount: 0, total: 0, paid: 0, owed: 0, lastDate: s.invoiceDate };
+      byCustomer.set(s.customerKey, c);
+    }
+    c.invoiceCount += 1;
+    c.total += s.total;
+    c.paid += s.paidAmount;
+    c.owed += s.balance;
+    if (s.invoiceDate > c.lastDate) c.lastDate = s.invoiceDate;
+  }
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const customers = [...byCustomer.values()]
+    .map((c) => ({ ...c, total: r2(c.total), paid: r2(c.paid), owed: r2(c.owed) }))
+    .sort((a, b) => b.total - a.total || a.customerName.localeCompare(b.customerName));
+
   ok(res, {
+    customers,
     summary: {
+      customerCount: customers.length,
       totalSales: Math.round(totalSales * 100) / 100,
       totalPaid: Math.round(totalPaid * 100) / 100,
       totalOwed,

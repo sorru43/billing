@@ -18,10 +18,11 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Users,
 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
-import { Field, Loader, StatusBadge, SubmitButton, inputCls } from '../components/ui.jsx';
+import { Field, Loader, Modal, StatusBadge, SubmitButton, inputCls } from '../components/ui.jsx';
 
 const ICONS = {
   sales: <ReceiptText size={20} />,
@@ -53,6 +54,7 @@ export default function Reports() {
   const [customUntil, setCustomUntil] = useState('');
   const [salesData, setSalesData] = useState(null);
   const [loadingSales, setLoadingSales] = useState(false);
+  const [openCustomer, setOpenCustomer] = useState(null); // customer row whose invoices are shown
 
   // Email sending modal / state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -133,7 +135,24 @@ export default function Reports() {
     fetchSales('custom', customFrom, customUntil);
   };
 
-  // Export Sales Report to CSV directly in browser
+  // Export Sales Report to CSV: one row per customer (as the table shows), or every invoice.
+  const exportCustomersCsv = () => {
+    if (!salesData || !salesData.customers?.length) {
+      toast.info('No sales data to export in selected period.');
+      return;
+    }
+    const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
+    const headers = ['Customer', 'Invoices', 'Last Purchase', 'Total Purchased', 'Paid', 'Owes Us'];
+    const rows = salesData.customers.map((c) => [q(c.customerName), c.invoiceCount, q(c.lastDate), c.total.toFixed(2), c.paid.toFixed(2), c.owed.toFixed(2)]);
+    const link = document.createElement('a');
+    link.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent([headers.join(','), ...rows.map((r) => r.join(','))].join('\n')));
+    link.setAttribute('download', `sales-by-customer-${period}-${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Sales by customer exported to CSV');
+  };
+
   const exportCsv = () => {
     if (!salesData || !salesData.sales?.length) {
       toast.info('No sales data to export in selected period.');
@@ -299,7 +318,14 @@ export default function Reports() {
                 onClick={exportCsv}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg border border-gray-300 transition-colors cursor-pointer"
               >
-                <Download size={14} /> Export CSV
+                <Download size={14} /> Export Invoices
+              </button>
+              <button
+                type="button"
+                onClick={exportCustomersCsv}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg border border-gray-300 transition-colors cursor-pointer"
+              >
+                <Download size={14} /> Export by Customer
               </button>
               {can('reports', 'create') && (
                 <button
@@ -429,21 +455,19 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* Sales Transactions Breakdown Table */}
+          {/* Sales by customer: one row per customer; clicking a name shows their invoices */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50/50">
+            <div className="p-4 border-b border-gray-200 flex flex-wrap gap-2 justify-between items-center bg-gray-50/50">
               <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                <ReceiptText size={16} className="text-purple-600" />
-                Sales Breakdown ({salesData?.sales?.length || 0} recorded)
+                <Users size={16} className="text-purple-600" />
+                Sales by Customer ({salesData?.customers?.length || 0} customers · {salesData?.sales?.length || 0} invoices)
               </h2>
-              <span className="text-xs text-gray-500">
-                Sorted by most recent sale date
-              </span>
+              <span className="text-xs text-gray-500">Click a customer to see their invoices</span>
             </div>
 
             {loadingSales ? (
               <Loader className="h-48" />
-            ) : !salesData?.sales?.length ? (
+            ) : !salesData?.customers?.length ? (
               <div className="p-12 text-center text-gray-500">
                 <p className="text-base font-semibold text-gray-700">No sales recorded for this period</p>
                 <p className="text-xs text-gray-400 mt-1">Try selecting another period like "This Month" or "Last 7 Days".</p>
@@ -454,72 +478,57 @@ export default function Reports() {
                   <thead className="bg-gray-100/70 text-xs font-semibold uppercase tracking-wider text-gray-600 border-b border-gray-200">
                     <tr>
                       <th className="py-3 px-4">#</th>
-                      <th className="py-3 px-4">Invoice #</th>
-                      <th className="py-3 px-4">Date</th>
                       <th className="py-3 px-4">Customer</th>
-                      <th className="py-3 px-4 text-center">Items</th>
-                      <th className="py-3 px-4 text-right">Sale Value</th>
+                      <th className="py-3 px-4 text-center">Invoices</th>
+                      <th className="py-3 px-4">Last Purchase</th>
+                      <th className="py-3 px-4 text-right">Total Purchased</th>
                       <th className="py-3 px-4 text-right">Paid</th>
-                      <th className="py-3 px-4 text-right">Owed</th>
-                      <th className="py-3 px-4 text-center">Payment</th>
-                      <th className="py-3 px-4 text-center">Invoice State</th>
+                      <th className="py-3 px-4 text-right">Owes Us</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {salesData.sales.map((s, idx) => (
-                      <tr key={s.id || idx} className="hover:bg-purple-50/20 transition-colors">
+                    {salesData.customers.map((c, idx) => (
+                      <tr key={c.key} className="hover:bg-purple-50/20 transition-colors">
                         <td className="py-3 px-4 text-xs text-gray-400 font-mono">{idx + 1}</td>
-                        <td className="py-3 px-4 font-medium">
-                          {s.invoiceId && !s.invoiceDeleted ? (
-                            <Link
-                              to={`/admin/invoices/view/${s.invoiceId}`}
-                              className="text-purple-600 hover:text-purple-800 hover:underline flex items-center gap-1"
-                            >
-                              {s.invoiceNumber}
-                              <ExternalLink size={12} className="opacity-60" />
-                            </Link>
-                          ) : (
-                            <span className="font-mono text-gray-800">{s.invoiceNumber}</span>
-                          )}
+                        <td className="py-3 px-4">
+                          <button
+                            type="button"
+                            onClick={() => setOpenCustomer(c)}
+                            className="font-semibold text-purple-600 hover:text-purple-800 hover:underline text-left cursor-pointer"
+                          >
+                            {c.customerName}
+                          </button>
+                          {!c.customerId && <span className="ml-2 text-[11px] text-gray-400">walk-in</span>}
                         </td>
-                        <td className="py-3 px-4 text-xs text-gray-600 whitespace-nowrap">{s.invoiceDate}</td>
-                        <td className="py-3 px-4 font-medium text-gray-900">{s.customerName}</td>
-                        <td className="py-3 px-4 text-center text-xs text-gray-600">{s.itemsCount}</td>
-                        <td className="py-3 px-4 text-right font-bold text-gray-900">{money(s.total)}</td>
-                        <td className="py-3 px-4 text-right font-semibold text-emerald-600">{money(s.paidAmount)}</td>
-                        <td className="py-3 px-4 text-right font-semibold text-rose-600">{money(s.balance)}</td>
-                        <td className="py-3 px-4 text-center">
-                          <StatusBadge status={s.status} />
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          {s.invoiceDeleted ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-                              Purged / Saved
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
-                              Active
-                            </span>
-                          )}
-                        </td>
+                        <td className="py-3 px-4 text-center text-gray-700">{c.invoiceCount}</td>
+                        <td className="py-3 px-4 text-xs text-gray-600 whitespace-nowrap">{c.lastDate}</td>
+                        <td className="py-3 px-4 text-right font-bold text-gray-900">{money(c.total)}</td>
+                        <td className="py-3 px-4 text-right font-semibold text-emerald-600">{money(c.paid)}</td>
+                        <td className={`py-3 px-4 text-right font-semibold ${c.owed > 0 ? 'text-rose-600' : 'text-gray-400'}`}>{money(c.owed)}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold text-gray-900 text-xs uppercase">
                     <tr>
-                      <td colSpan={5} className="py-3 px-4 text-right">
+                      <td colSpan={4} className="py-3 px-4 text-right">
                         Totals for Period:
                       </td>
                       <td className="py-3 px-4 text-right text-purple-700 text-sm">{money(summary.totalSales)}</td>
                       <td className="py-3 px-4 text-right text-emerald-600 text-sm">{money(summary.totalPaid)}</td>
                       <td className="py-3 px-4 text-right text-rose-600 text-sm">{money(summary.totalOwed)}</td>
-                      <td colSpan={2}></td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
             )}
           </div>
+          <CustomerInvoicesModal
+            customer={openCustomer}
+            invoices={openCustomer ? salesData.sales.filter((s) => s.customerKey === openCustomer.key) : []}
+            period={summary}
+            money={money}
+            onClose={() => setOpenCustomer(null)}
+          />
         </div>
       )}
 
@@ -643,5 +652,75 @@ export default function Reports() {
         </div>
       )}
     </div>
+  );
+}
+
+// A customer's invoices in the report period (opened by clicking their name in Sales by Customer).
+function CustomerInvoicesModal({ customer, invoices, period, money, onClose }) {
+  if (!customer) return null;
+  return (
+    <Modal isOpen onClose={onClose} title={customer.customerName} size="3xl">
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+          <span className="text-gray-500">
+            {period.from === period.until ? period.from : `${period.from} to ${period.until}`}
+          </span>
+          <span>
+            Purchased <b className="text-gray-950">{money(customer.total)}</b>
+          </span>
+          <span>
+            Paid <b className="text-emerald-700">{money(customer.paid)}</b>
+          </span>
+          <span>
+            Owes us <b className={customer.owed > 0 ? 'text-rose-600' : 'text-gray-950'}>{money(customer.owed)}</b>
+          </span>
+          {customer.customerId && (
+            <Link to={`/admin/customers/${customer.customerId}`} className="text-purple-600 hover:underline text-xs self-center">
+              Open customer page →
+            </Link>
+          )}
+        </div>
+        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-gray-50 text-xs font-semibold uppercase text-gray-600 border-b border-gray-200">
+              <tr>
+                <th className="py-2 px-3">Invoice #</th>
+                <th className="py-2 px-3">Date</th>
+                <th className="py-2 px-3 text-center">Items</th>
+                <th className="py-2 px-3 text-right">Total</th>
+                <th className="py-2 px-3 text-right">Paid</th>
+                <th className="py-2 px-3 text-right">Owed</th>
+                <th className="py-2 px-3 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {invoices.map((s) => (
+                <tr key={s.id}>
+                  <td className="py-2 px-3 font-medium">
+                    {s.invoiceId && !s.invoiceDeleted ? (
+                      <Link to={`/admin/invoices/view/${s.invoiceId}`} className="text-purple-600 hover:underline inline-flex items-center gap-1">
+                        {s.invoiceNumber} <ExternalLink size={12} className="opacity-60" />
+                      </Link>
+                    ) : (
+                      <span className="font-mono text-gray-800" title="Invoice purged; its sale is kept in reports">
+                        {s.invoiceNumber}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{s.invoiceDate}</td>
+                  <td className="py-2 px-3 text-center text-xs text-gray-600">{s.itemsCount}</td>
+                  <td className="py-2 px-3 text-right font-semibold text-gray-900">{money(s.total)}</td>
+                  <td className="py-2 px-3 text-right text-emerald-600">{money(s.paidAmount)}</td>
+                  <td className={`py-2 px-3 text-right ${s.balance > 0 ? 'text-rose-600 font-semibold' : 'text-gray-400'}`}>{money(s.balance)}</td>
+                  <td className="py-2 px-3 text-center">
+                    <StatusBadge status={s.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Modal>
   );
 }
