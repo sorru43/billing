@@ -3,14 +3,12 @@ import { z } from 'zod';
 import { query, tx } from '../db.js';
 import { requirePerm, can } from '../auth.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
+import { variantName, MAX_VALUES, MAX_VARIANTS } from '../matrixGroups.js';
 
 // Matrix items: a parent with one or two attributes (e.g. Flavor x Size). Each
 // variant is stored as an ordinary product row (matrix_id, option1, option2), so
 // it has its own barcode and stock and sells on invoices like any product.
 const r = Router();
-
-const MAX_VALUES = 60;
-const MAX_VARIANTS = 600;
 
 const price = (label) =>
   z.coerce.number({ error: `${label} must be a number` }).min(0, `${label} cannot be negative`).max(1e11);
@@ -85,8 +83,6 @@ const schema = z
       }
     });
   });
-
-export const variantName = (name, o1, o2) => `${name} - ${o2 ? `${o1} / ${o2}` : o1}`;
 
 const outMatrix = (m) => ({
   id: m.id,

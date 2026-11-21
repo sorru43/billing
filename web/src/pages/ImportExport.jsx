@@ -8,18 +8,19 @@ import {
   Contact,
   Download,
   FileSpreadsheet,
+  Grid3x3,
   Info,
   RefreshCw,
-  Upload,
   ScanBarcode,
+  Upload,
   AlertCircle,
   X,
 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney } from '../auth.jsx';
 import { CancelButton, SubmitButton } from '../components/ui.jsx';
-import { fileToCsv, downloadProductsTemplate, downloadCustomersTemplate } from '../spreadsheet.js';
 import BarcodeListCard from '../components/BarcodeListCard.jsx';
+import { fileToCsv, downloadProductsTemplate, downloadCustomersTemplate } from '../spreadsheet.js';
 
 export default function ImportExport() {
   const { can } = useAuth();
@@ -167,7 +168,7 @@ export default function ImportExport() {
     if (custFileRef.current) custFileRef.current.value = '';
   };
 
-  const prodWillWrite = prodPreview ? prodPreview.created + prodPreview.updated : 0;
+  const prodWillWrite = prodPreview ? prodPreview.created + prodPreview.updated + (prodPreview.matrices?.moved || 0) : 0;
   const custWillWrite = custPreview ? custPreview.created + custPreview.updated : 0;
 
   return (
@@ -230,7 +231,6 @@ export default function ImportExport() {
             )}
           </button>
         )}
-      </div>
         {canBarcodeList && (
           <button
             type="button"
@@ -245,11 +245,12 @@ export default function ImportExport() {
             <span>Barcode List</span>
           </button>
         )}
+      </div>
 
-      {/* TAB 1: PRODUCTS */}
       {/* TAB 3: BARCODE LIST (reference only, never inventory) */}
       {tab === 'barcodes' && canBarcodeList && <BarcodeListCard />}
 
+      {/* TAB 1: PRODUCTS */}
       {tab === 'products' && canProductsView && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Export Card */}
@@ -342,6 +343,11 @@ export default function ImportExport() {
               </p>
               <p className="text-gray-500">
                 Products are matched by <b>Barcode</b> or <b>Product Name</b>. Up to 5,000 items per file.
+              </p>
+              <p className="text-gray-500">
+                <b>Matrix items:</b> rows named like <i>Geek Bar Pulse (Mango)</i> and <i>Geek Bar Pulse (Grape)</i> become one
+                matrix item, <i>Geek Bar Pulse</i>, with a Flavor for each row. A strength such as <i>(Mint 6MG)</i> becomes a
+                second option.
               </p>
             </div>
 
@@ -440,6 +446,8 @@ export default function ImportExport() {
                       </p>
                     )}
 
+                    {prodPreview.matrixItemCount > 0 && <MatrixItemsPreview preview={prodPreview} />}
+
                     {/* Preview Table */}
                     {prodPreview.preview && prodPreview.preview.length > 0 && (
                       <div className="overflow-x-auto border border-gray-200 rounded-lg">
@@ -458,7 +466,14 @@ export default function ImportExport() {
                           <tbody>
                             {prodPreview.preview.map((p, i) => (
                               <tr key={i} className="border-t border-gray-100 hover:bg-gray-50/50">
-                                <td className="px-2.5 py-1.5 font-medium text-gray-900">{p.name}</td>
+                                <td className="px-2.5 py-1.5 font-medium text-gray-900">
+                                  {p.name}
+                                  {p.matrix && (
+                                    <span className="block text-[11px] font-normal text-purple-700">
+                                      Matrix item: {p.matrix} · {p.flavor}
+                                    </span>
+                                  )}
+                                </td>
                                 <td className="px-2.5 py-1.5 text-gray-600">{p.category || 'General'}</td>
                                 <td className="px-2.5 py-1.5 text-gray-500 font-mono text-[11px]">{p.barcode || '—'}</td>
                                 <td className="px-2.5 py-1.5 text-gray-700">{money(p.cost)}</td>
@@ -791,6 +806,46 @@ export default function ImportExport() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Matrix items the product file will create or add to (rows named "Name (Flavor)").
+function MatrixItemsPreview({ preview }) {
+  const { matrices = {}, matrixItems = [], matrixItemCount } = preview;
+  return (
+    <div className="border border-purple-200 rounded-lg overflow-hidden">
+      <div className="px-3 py-2 text-xs bg-purple-50 border-b border-purple-100 text-purple-900 space-y-0.5">
+        <p className="font-semibold flex items-center gap-1.5">
+          <Grid3x3 size={14} /> {matrixItemCount} matrix item{matrixItemCount === 1 ? '' : 's'} in this file
+        </p>
+        <p className="text-purple-800">
+          {matrices.created || 0} new, {matrices.updated || 0} existing updated
+          {matrices.moved ? `, ${matrices.moved} existing products grouped into them` : ''}.
+        </p>
+      </div>
+      <div className="max-h-40 overflow-y-auto">
+        <table className="w-full text-xs">
+          <tbody>
+            {matrixItems.map((m) => (
+              <tr key={m.name} className="border-t border-purple-50 first:border-t-0">
+                <td className="px-2.5 py-1 font-medium text-gray-800">{m.name}</td>
+                <td className="px-2.5 py-1 text-gray-600 whitespace-nowrap">
+                  {m.variants} {m.strength ? 'flavor × strength' : m.variants === 1 ? 'flavor' : 'flavors'}
+                </td>
+                <td className="px-2.5 py-1 text-right whitespace-nowrap">
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${m.existing ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                    {m.existing ? 'Existing' : 'New'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {matrixItemCount > matrixItems.length && (
+          <p className="px-2.5 py-1 text-[11px] text-gray-500 border-t border-purple-50">…and {matrixItemCount - matrixItems.length} more</p>
+        )}
+      </div>
     </div>
   );
 }

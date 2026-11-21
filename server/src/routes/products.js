@@ -7,6 +7,7 @@ import { toCsv } from '../pdf.js';
 import { ALERT_SQL, DEFAULT_ALERT } from '../stock.js';
 import { parseCsv } from './customers.js';
 import { lookupBarcode, LookupError, barcodeVariants, findInBarcodeList } from '../barcodeLookup.js';
+import { groupVariants, saveMatrixGroups } from '../matrixGroups.js';
 
 const r = Router();
 
@@ -274,6 +275,14 @@ r.get('/export', requirePerm('import_export', 'view'), requirePerm('products', '
 
 const importBody = express.text({ type: () => true, limit: '3mb' });
 
+// Thrown to roll back a preview run of the import; carries its counts out of the transaction.
+class PreviewRollback extends Error {
+  constructor(summary) {
+    super('preview');
+    this.summary = summary;
+  }
+}
+
 r.post('/import', requirePerm('import_export', 'create'), requirePerm('products', 'create'), importBody, h(async (req, res) => {
   const mode = req.query.mode === 'update' ? 'update' : 'skip';
   const dryRun = req.query.dryRun === '1';
@@ -391,7 +400,22 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
     });
   });
 
-  const summary = await tx(async (client) => {
+  // Matrix items found in the file (filled in by run), for the preview.
+  const grouped = new Map();
+  let matrixItems = [];
+
+  // A preview runs the real import and rolls it back, so its counts (matrix items included)
+  // are exactly what the import will do.
+  const run = async (client) => {
+    // 0. Rows named "BASE (FLAVOR)" become matrix items when 2+ rows share BASE or a matrix item
+    //    named BASE exists (matrixGroups.js). The rest are imported as plain products below.
+    const { rows: savedMatrices } = await client.query(`SELECT * FROM product_matrices`);
+    const matrices = new Map(savedMatrices.map((m) => [m.name.toLowerCase(), m]));
+    const { groups, singles, misfits } = groupVariants(valid, { existing: matrices });
+    for (const { item, message } of misfits) errors.push({ row: item.row, name: item.name, message });
+    for (const g of groups) for (const v of g.variants) grouped.set(v.item.row, { matrix: g.name, flavor: v.option2 ? `${v.option1} / ${v.option2}` : v.option1 });
+    matrixItems = groups.map((g) => ({ name: g.name, variants: g.variants.length, strength: Boolean(g.attr2_name), existing: g.existing }));
+
     // 1. Categories
     const { rows: catRows } = await client.query(`SELECT id, lower(name) AS lname, slug FROM categories`);
     const catByName = new Map(catRows.map((c) => [c.lname, c.id]));
@@ -399,38 +423,30 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
 
     let defaultCatId = catRows[0]?.id;
     if (!defaultCatId) {
-      if (dryRun) {
-        defaultCatId = '00000000-0000-0000-0000-000000000000';
-      } else {
-        const { rows: defCat } = await client.query(
-          `INSERT INTO categories (name, slug, status) VALUES ('General', 'general', true) RETURNING id`
-        );
-        defaultCatId = defCat[0].id;
-        catByName.set('general', defaultCatId);
-        catSlugs.add('general');
-      }
+      const { rows: defCat } = await client.query(
+        `INSERT INTO categories (name, slug, status) VALUES ('General', 'general', true) RETURNING id`
+      );
+      defaultCatId = defCat[0].id;
+      catByName.set('general', defaultCatId);
+      catSlugs.add('general');
     }
 
     for (const item of valid) {
       if (!item.categoryName) continue;
       const catKey = item.categoryName.toLowerCase();
       if (!catByName.has(catKey)) {
-        if (dryRun) {
-          catByName.set(catKey, '00000000-0000-0000-0000-000000000000');
-        } else {
-          let baseSlug = slugify(item.categoryName);
-          let s = baseSlug;
-          let counter = 1;
-          while (catSlugs.has(s)) {
-            s = `${baseSlug}-${counter++}`;
-          }
-          catSlugs.add(s);
-          const { rows: newCat } = await client.query(
-            `INSERT INTO categories (name, slug, status) VALUES ($1, $2, true) RETURNING id`,
-            [item.categoryName, s]
-          );
-          catByName.set(catKey, newCat[0].id);
+        let baseSlug = slugify(item.categoryName);
+        let s = baseSlug;
+        let counter = 1;
+        while (catSlugs.has(s)) {
+          s = `${baseSlug}-${counter++}`;
         }
+        catSlugs.add(s);
+        const { rows: newCat } = await client.query(
+          `INSERT INTO categories (name, slug, status) VALUES ($1, $2, true) RETURNING id`,
+          [item.categoryName, s]
+        );
+        catByName.set(catKey, newCat[0].id);
       }
     }
 
@@ -441,16 +457,13 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
       if (!item.brandName) continue;
       const key = item.brandName.toLowerCase();
       if (brandByName.has(key)) continue;
-      if (dryRun) brandByName.set(key, '00000000-0000-0000-0000-000000000000');
-      else {
-        const { rows: nb } = await client.query(`INSERT INTO brands (name) VALUES ($1) RETURNING id`, [item.brandName]);
-        brandByName.set(key, nb[0].id);
-      }
+      const { rows: nb } = await client.query(`INSERT INTO brands (name) VALUES ($1) RETURNING id`, [item.brandName]);
+      brandByName.set(key, nb[0].id);
     }
 
     // 2. Existing products
     const { rows: existingProds } = await client.query(
-      `SELECT id, name, lower(name) AS lname, lower(barcode) AS lbarcode, category_id FROM products`
+      `SELECT id, name, lower(name) AS lname, lower(barcode) AS lbarcode, category_id, matrix_id FROM products`
     );
     const byBarcode = new Map();
     const byName = new Map();
@@ -459,9 +472,21 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
       if (p.lname) byName.set(p.lname, p);
     }
 
-    let created = 0, updated = 0, skipped = 0;
+    // 3. Matrix items, then plain products.
+    const mx = await saveMatrixGroups(client, groups, {
+      mode,
+      canMove: can(req, 'products', 'edit'),
+      matrices,
+      byBarcode,
+      byName,
+      categoryOf: (i) => (i.categoryName ? catByName.get(i.categoryName.toLowerCase()) : null),
+      brandOf: (i) => (i.brandName ? brandByName.get(i.brandName.toLowerCase()) : null),
+      defaultCategoryId: defaultCatId,
+      errors,
+    });
+    let { created, updated, skipped } = mx;
 
-    for (const item of valid) {
+    for (const item of singles) {
       let match = (item.barcodeKey && byBarcode.get(item.barcodeKey)) || byName.get(item.nameKey);
 
       if (match && mode === 'skip') {
@@ -488,8 +513,6 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
         }
 
         updated++;
-        if (dryRun) continue;
-
         await client.query(
           `UPDATE products SET
              name = $1,
@@ -534,8 +557,6 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
         }
 
         created++;
-        if (dryRun) continue;
-
         const { rows: inserted } = await client.query(
           `INSERT INTO products (name, cost, selling_price, top_customer_price, jobber_price, quantity, barcode, description, category_id, status, brand_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
@@ -560,8 +581,25 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
       }
     }
 
-    return { created, updated, skipped };
-  });
+    return {
+      created,
+      updated,
+      skipped,
+      matrices: { created: mx.matricesCreated, updated: mx.matricesUpdated, moved: mx.moved },
+    };
+  };
+
+  let summary;
+  try {
+    summary = await tx(async (client) => {
+      const out = await run(client);
+      if (dryRun) throw new PreviewRollback(out);
+      return out;
+    });
+  } catch (e) {
+    if (!(e instanceof PreviewRollback)) throw e;
+    summary = e.summary;
+  }
 
   const columns = [...new Set(header.filter(Boolean))];
   const ignored = table[0].filter((h, j) => h.trim() && !header[j]);
@@ -578,12 +616,20 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
       ...p,
       category: p.categoryName || 'General',
       brand: p.brandName || '',
+      matrix: grouped.get(row)?.matrix || '',
+      flavor: grouped.get(row)?.flavor || '',
     })),
+    matrixItems: matrixItems.slice(0, 50),
+    matrixItemCount: matrixItems.length,
   };
 
+  const mx = summary.matrices;
+  const matrixMsg = mx.created || mx.updated || mx.moved
+    ? `; matrix items: ${mx.created} new, ${mx.updated} updated, ${mx.moved} products grouped`
+    : '';
   const msg = dryRun
     ? 'Preview ready'
-    : `Imported: ${summary.created} added, ${summary.updated} updated, ${summary.skipped} skipped, ${errors.length} with errors`;
+    : `Imported: ${summary.created} added, ${summary.updated} updated, ${summary.skipped} skipped, ${errors.length} with errors${matrixMsg}`;
   ok(res, result, msg);
 }));
 
