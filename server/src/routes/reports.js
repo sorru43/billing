@@ -47,7 +47,7 @@ async function build(b, sym) {
     const { rows } = await query(
       `SELECT csr.*, inv.id AS active_invoice_id, inv.price_level
        FROM customer_sales_records csr
-       LEFT JOIN invoices inv ON inv.invoice_number = csr.invoice_number
+       LEFT JOIN invoices inv ON inv.id = csr.invoice_id OR (csr.invoice_id IS NULL AND inv.invoice_number = csr.invoice_number)
        ${where}
        ORDER BY csr.invoice_date DESC, csr.invoice_number DESC`,
       params,
@@ -193,7 +193,7 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
   const { rows } = await query(
     `SELECT csr.*, inv.id AS active_invoice_id, inv.price_level
      FROM customer_sales_records csr
-     LEFT JOIN invoices inv ON inv.invoice_number = csr.invoice_number
+     LEFT JOIN invoices inv ON inv.id = csr.invoice_id OR (csr.invoice_id IS NULL AND inv.invoice_number = csr.invoice_number)
      ${where}
      ORDER BY csr.invoice_date DESC, csr.created_at DESC`,
     params,

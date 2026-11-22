@@ -521,18 +521,20 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
 
         updated++;
         await client.query(
+          // A matrix variant keeps its "Item - Flavor" name, category, brand and description (they
+          // come from its matrix item); the file still updates its prices, stock, barcode and status.
           `UPDATE products SET
-             name = $1,
+             name = CASE WHEN matrix_id IS NULL THEN $1 ELSE name END,
              cost = $2,
              selling_price = $3,
              top_customer_price = $4,
              jobber_price = $5,
              quantity = $6,
              barcode = COALESCE(NULLIF($7, ''), barcode),
-             description = COALESCE(NULLIF($8, ''), description),
-             category_id = COALESCE($9, category_id),
+             description = CASE WHEN matrix_id IS NULL THEN COALESCE(NULLIF($8, ''), description) ELSE description END,
+             category_id = CASE WHEN matrix_id IS NULL THEN COALESCE($9, category_id) ELSE category_id END,
              status = $10,
-             brand_id = COALESCE($12, brand_id),
+             brand_id = CASE WHEN matrix_id IS NULL THEN COALESCE($12, brand_id) ELSE brand_id END,
              updated_at = now()
            WHERE id = $11`,
           [

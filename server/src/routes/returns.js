@@ -32,12 +32,14 @@ const out = (x) => ({
   total: x.total, reason: x.reason, createdAt: x.created_at,
 });
 
-// Quantities already returned per product on one invoice.
-async function returnedSoFar(client, invoiceNumber) {
+// Quantities already returned per product on one invoice. Matched by invoice id: numbers can be
+// reused once an old invoice is gone, and its returns must not count against a new one.
+async function returnedSoFar(client, inv) {
   const { rows } = await client.query(
     `SELECT (it->>'productId') AS pid, sum((it->>'quantity')::int)::int AS qty
-       FROM returns, jsonb_array_elements(items) it WHERE invoice_number = $1 GROUP BY 1`,
-    [invoiceNumber],
+       FROM returns, jsonb_array_elements(items) it
+      WHERE invoice_id = $1 OR (invoice_id IS NULL AND invoice_number = $2) GROUP BY 1`,
+    [inv.id, inv.invoice_number],
   );
   return new Map(rows.map((x) => [x.pid, x.qty]));
 }
@@ -70,7 +72,7 @@ r.get('/lookup', requirePerm('returns', 'create'), h(async (req, res) => {
   const { rows } = await query(`SELECT * FROM invoices WHERE lower(invoice_number) = lower($1)`, [number]);
   if (!rows.length) return fail(res, 404, `Invoice ${number} not found`);
   const inv = rows[0];
-  const done = await returnedSoFar({ query }, inv.invoice_number);
+  const done = await returnedSoFar({ query }, inv);
   ok(res, {
     id: inv.id, invoiceNumber: inv.invoice_number, invoiceDate: inv.invoice_date, customerName: inv.customer_name,
     customerId: inv.customer_id, status: inv.status, total: inv.total,
@@ -94,7 +96,7 @@ r.post('/', requirePerm('returns', 'create'), h(async (req, res) => {
     if (!rows.length) return { notFound: true };
     const inv = rows[0];
     const lines = new Map(invoiceLines(inv).map((l) => [l.productId, l]));
-    const done = await returnedSoFar(client, inv.invoice_number);
+    const done = await returnedSoFar(client, inv);
     const errors = {};
     b.items.forEach((it, idx) => {
       const l = lines.get(it.productId);

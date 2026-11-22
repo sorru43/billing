@@ -18,7 +18,7 @@ export const startRetentionWindow = (db, invoiceId) =>
 
 export async function invoiceEmail(inv, to, { archive }) {
   const company = await getSetting('company');
-  const sym = '$';
+  const sym = company.currencySymbol || '$';
   const pdf = await invoicePdf(inv, company);
   const subject = archive
     ? `[Archive] Invoice ${inv.invoice_number} – ${inv.customer_name}`
@@ -64,7 +64,7 @@ export async function archiveAndDelete(id) {
     return { ok: false, error };
   }
   // Ensure the permanent sales ledger marks the active invoice as deleted, but preserves all sales values
-  await query(`UPDATE customer_sales_records SET invoice_deleted = true WHERE invoice_id = $1 OR invoice_number = $2`, [id, inv.invoice_number]);
+  await query(`UPDATE customer_sales_records SET invoice_deleted = true WHERE invoice_id = $1 OR (invoice_id IS NULL AND invoice_number = $2)`, [id, inv.invoice_number]);
   await query(`DELETE FROM invoices WHERE id = $1 AND status = 'paid'`, [id]);
   return { ok: true };
 }
@@ -72,8 +72,16 @@ export async function archiveAndDelete(id) {
 // When a paid invoice's retention window ends (INVOICE_RETENTION_HOURS after it was paid) it is
 // emailed to ARCHIVE_EMAIL and then deleted. If the email fails it is kept and retried on the next run.
 let running = false;
+let warnedNoArchive = false;
 export async function purgeExpiredInvoices() {
   if (running) return;
+  // Without an archive address nothing can be archived, so nothing is deleted: say so once, not
+  // once per invoice every run (that filled the logs with thousands of identical lines).
+  if (!config.archiveEmail) {
+    if (!warnedNoArchive) console.log('[purge] off: no ARCHIVE_EMAIL in server/.env, so paid invoices are kept');
+    warnedNoArchive = true;
+    return;
+  }
   running = true;
   try {
     const { rows } = await query(`SELECT id, invoice_number FROM invoices WHERE expires_at <= now() AND status = 'paid' ORDER BY expires_at LIMIT 50`);

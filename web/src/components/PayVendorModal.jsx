@@ -31,7 +31,7 @@ export default function PayVendorModal({ isOpen, vendor, receiving, onClose, onD
       setMethod('check');
       setReference('');
       setNotes('');
-      setPaymentDate(new Date().toISOString().slice(0, 10));
+      setPaymentDate(new Date().toLocaleDateString('en-CA')); // today in the store's time zone, not UTC
     }
   }, [isOpen, vendor, receiving, totalOwed]);
 

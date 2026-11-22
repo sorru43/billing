@@ -362,8 +362,10 @@ export default function Customers() {
   const [importing, setImporting] = useState(false);
   const [payingCustomer, setPayingCustomer] = useState(null);
 
+  // Recording a payment needs more than view access (the server checks the same).
+  const canTakePayment = can('customers', 'edit') || can('invoices', 'edit') || can('invoices', 'create');
   const actions = [
-    { label: 'Update Balance', icon: <CreditCard size={14} />, onClick: (c) => setPayingCustomer(c) },
+    canTakePayment && { label: 'Update Balance', icon: <CreditCard size={14} />, onClick: (c) => setPayingCustomer(c) },
     can('invoices', 'view') && { label: 'View Invoices', icon: <Eye size={14} />, onClick: (c) => navigate(`/admin/customers/${c.id}`) },
     can('customers', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (c) => (setErrors({}), setEditing({ ...EMPTY, ...c })) },
     can('customers', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
@@ -454,7 +456,9 @@ export default function Customers() {
                 <span className="text-emerald-700">{money(c.totals?.paid || 0)}</span>,
                 <span className={c.totals?.balance > 0 ? 'text-red-600 font-semibold' : 'text-gray-500'}>{money(c.totals?.balance || 0)}</span>,
                 <div>
-                  {c.totals?.balance > 0 ? (
+                  {!canTakePayment ? (
+                    <span className={`text-xs font-medium ${c.totals?.balance > 0 ? 'text-red-600' : 'text-emerald-700'}`}>{c.totals?.balance > 0 ? 'Owes' : 'Settled'}</span>
+                  ) : c.totals?.balance > 0 ? (
                     <button
                       type="button"
                       onClick={() => setPayingCustomer(c)}

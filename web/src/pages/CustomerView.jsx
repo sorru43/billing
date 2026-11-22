@@ -89,12 +89,14 @@ export default function CustomerView() {
           <p className="text-sm text-gray-500">{[c.company, c.email, c.phone].filter(Boolean).join(' · ') || 'No contact details'}</p>
         </div>
         <div className="flex items-center gap-2 self-start">
+          {(can('customers', 'edit') || can('invoices', 'edit') || can('invoices', 'create')) && (
           <button
             onClick={() => setPaying(true)}
             className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-gray-950 text-white px-3 py-1.5 rounded-md shadow cursor-pointer text-sm font-medium transition-colors"
           >
             <CreditCard size={15} /> Receive Payment
           </button>
+          )}
           {can('invoices', 'create') && (
             <button
               onClick={() => navigate('/admin/invoices/create-invoice')}

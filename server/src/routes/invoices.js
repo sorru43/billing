@@ -592,7 +592,7 @@ r.delete('/:id', requirePerm('invoices', 'delete'), h(async (req, res) => {
 
   // Mark sales ledger record as deleted invoice, keeping the sale value permanently recorded
   await query(
-    `UPDATE customer_sales_records SET invoice_deleted = true WHERE invoice_id = $1 OR invoice_number = $2`,
+    `UPDATE customer_sales_records SET invoice_deleted = true WHERE invoice_id = $1 OR (invoice_id IS NULL AND invoice_number = $2)`,
     [inv.id, inv.invoice_number],
   );
 

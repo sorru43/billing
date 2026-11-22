@@ -67,13 +67,14 @@ r.put('/:id', requirePerm('users', 'edit'), h(async (req, res) => {
   let pw = '';
   if (b.password) {
     params.push(await bcrypt.hash(b.password, 12));
-    pw = `, password_hash = $${params.length}, token_version = token_version + 1`;
+    pw = `, password_hash = $${params.length}`;
   }
   try {
-    // A disabled user's existing sessions are also cut off (token_version bump).
+    // A new password or disabling the user cuts off their existing sessions (one token_version bump;
+    // token_version may only be assigned once in the statement).
     const { rows } = await query(
       `UPDATE users SET first_name=$1,last_name=$2,email=$3,phone=$4,role_id=$5,status=$6,
-              token_version = token_version + CASE WHEN status AND NOT $6 THEN 1 ELSE 0 END,
+              token_version = token_version + CASE WHEN (status AND NOT $6) OR ${b.password ? 'true' : 'false'} THEN 1 ELSE 0 END,
               updated_at=now() ${pw}
         WHERE id=$7 AND user_type = 2 RETURNING *`,
       params,

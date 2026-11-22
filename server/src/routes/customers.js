@@ -62,8 +62,11 @@ const paymentSchema = z.object({
   invoiceId: z.string().uuid().optional().or(z.literal('')).or(z.null()).transform((v) => v || null),
 });
 
-const canUpdateBalance = (req) =>
+// Seeing a balance: anyone who works with customers or invoices. Recording money against it is a
+// change, so view-only customer access is not enough (cashiers taking payment have invoices create).
+const canSeeBalance = (req) =>
   can(req, 'customers', 'edit') || can(req, 'customers', 'view') || can(req, 'invoices', 'edit') || can(req, 'invoices', 'create');
+const canUpdateBalance = (req) => can(req, 'customers', 'edit') || can(req, 'invoices', 'edit') || can(req, 'invoices', 'create');
 
 const dupEmail = (res) => fail(res, 422, 'A customer with this email already exists', { email: 'A customer with this email already exists' });
 
@@ -232,7 +235,7 @@ r.get('/:id/statement', requirePerm('customers', 'view'), h(async (req, res) => 
 // Small balance lookup for payment screens (also allowed for cashiers who take payments on invoices).
 r.get('/:id/balance', h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');
-  if (!canUpdateBalance(req)) return fail(res, 403, 'You do not have permission to view this balance');
+  if (!canSeeBalance(req)) return fail(res, 403, 'You do not have permission to view this balance');
   const { rows } = await query(`SELECT c.*, ${TOTALS_SQL} FROM customers c WHERE c.id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Customer not found');
   ok(res, { customer: out(rows[0]), totals: totalsOut(rows[0]) });
@@ -302,6 +305,21 @@ r.patch('/:id/status', requirePerm('customers', 'edit'), h(async (req, res) => {
 
 r.delete('/:id', requirePerm('customers', 'delete'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Customer not found');
+  // Deleting turns the customer's invoices into walk-in invoices, so a customer who still owes money
+  // (or has money on account) would lose that balance. Those are refused; turning them off keeps it.
+  const open = (await query(
+    `SELECT c.credit_balance,
+            (SELECT count(*)::int FROM invoices i WHERE i.customer_id = c.id AND i.status <> 'paid') AS n,
+            (SELECT coalesce(sum(i.total - coalesce(i.paid_amount, 0)), 0) FROM invoices i WHERE i.customer_id = c.id AND i.status <> 'paid') AS owed
+       FROM customers c WHERE c.id = $1`,
+    [req.params.id],
+  )).rows[0];
+  if (open && (open.n > 0 || Number(open.credit_balance) > 0)) {
+    const parts = [];
+    if (open.n > 0) parts.push(`still owes ${Number(open.owed).toFixed(2)} on ${open.n} invoice${open.n === 1 ? '' : 's'}`);
+    if (Number(open.credit_balance) > 0) parts.push(`has ${Number(open.credit_balance).toFixed(2)} credit on account`);
+    return fail(res, 409, `This customer ${parts.join(' and ')}. Settle that first, or turn the customer off instead of deleting.`);
+  }
   const { rowCount } = await query(`DELETE FROM customers WHERE id=$1`, [req.params.id]);
   if (!rowCount) return fail(res, 404, 'Customer not found');
   ok(res, null, 'Customer deleted');
