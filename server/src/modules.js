@@ -7,7 +7,9 @@ export const MODULE_GROUPS = [
       { slug: 'products', moduleName: 'Products' },
       { slug: 'customers', moduleName: 'Customers' },
       { slug: 'categories', moduleName: 'Categories & Brands' },
-      { slug: 'invoices', moduleName: 'Invoices' },
+      // createOnly: "Create" may be given without "View" — a cashier who makes and prints invoices but
+      // never sees the invoice list. For every other module any right implies seeing it.
+      { slug: 'invoices', moduleName: 'Invoices', createOnly: true, note: 'Create without View = cashier: makes and prints invoices, never sees the list' },
       // Without this, staff can open an invoice only right after creating it (until the first print,
       // or 30 minutes) or after an admin approves their request. Only "view" applies.
       { slug: 'invoice_history', moduleName: 'See past invoices (no admin approval needed)', actions: ['view'] },

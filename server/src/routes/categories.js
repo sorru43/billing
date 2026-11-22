@@ -47,9 +47,16 @@ async function uniqueSlug(name, excludeId) {
   }
 }
 
+// Names are unique ignoring case: "Vapes" and "vapes" would split products between two categories,
+// and the product import (which matches categories by name, ignoring case) couldn't tell them apart.
+const nameTaken = async (name, exceptId = null) =>
+  (await query(`SELECT 1 FROM categories WHERE lower(trim(name)) = lower(trim($1)) AND ($2::uuid IS NULL OR id <> $2)`, [name, exceptId])).rowCount > 0;
+const taken = (res) => fail(res, 422, 'Category already exists', { name: 'A category with this name already exists' });
+
 r.post('/', requirePerm('categories', 'create'), h(async (req, res) => {
   const body = validate(schema, req.body, res);
   if (!body) return;
+  if (await nameTaken(body.name)) return taken(res);
   try {
     const { rows } = await query(
       `INSERT INTO categories (name, slug, status) VALUES ($1,$2,$3) RETURNING *`,
@@ -66,6 +73,7 @@ r.put('/:id', requirePerm('categories', 'edit'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Category not found');
   const body = validate(schema, req.body, res);
   if (!body) return;
+  if (await nameTaken(body.name, req.params.id)) return taken(res);
   try {
     const { rows } = await query(
       `UPDATE categories SET name=$1, slug=$2, status=$3 WHERE id=$4 RETURNING *`,

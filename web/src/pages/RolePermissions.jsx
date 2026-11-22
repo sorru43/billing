@@ -44,8 +44,11 @@ export default function RolePermissions() {
         actionsOf(m).forEach((a) => (cur[a] = v));
       } else {
         cur[action] = !cur[action];
-        if (action !== 'view' && cur[action]) cur.view = true; // can't act on what you can't see
-        if (action === 'view' && !cur.view) ACTIONS.forEach((a) => (cur[a] = false));
+        // Can't act on what you can't see, except Create on a createOnly module (invoices: a cashier
+        // who makes invoices without seeing the list).
+        const createOnly = m.createOnly && action === 'create';
+        if (action !== 'view' && cur[action] && !createOnly) cur.view = true;
+        if (action === 'view' && !cur.view) ACTIONS.forEach((a) => (cur[a] = m.createOnly && a === 'create' ? cur.create : false));
       }
       return { ...p, [slug]: cur };
     });
@@ -105,7 +108,10 @@ export default function RolePermissions() {
                       const p = get(m.slug);
                       return (
                         <tr key={m.slug} className="border-t border-gray-200  text-sm text-left">
-                          <td className="px-4 py-3 text-sm font-medium text-gray-950">{m.moduleName}</td>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-950">
+                            {m.moduleName}
+                            {m.note && <span className="block text-xs font-normal text-gray-500">{m.note}</span>}
+                          </td>
                           {ACTIONS.map((a) => (
                             <td key={a} className="px-4 py-3">
                               {actionsOf(m).includes(a) && <Checkbox checked={p[a]} onChange={() => toggle(m, a)} disabled={!editable} />}

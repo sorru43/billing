@@ -428,12 +428,18 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('customers
   const summary = await tx(async (client) => {
     const emails = valid.filter((c) => c.email).map((c) => c.email);
     const names = valid.filter((c) => !c.email).map((c) => c.name.toLowerCase());
+    // A row without an email matches by name + phone, whether or not the saved customer has an email
+    // (before, it only matched email-less customers, so it created a duplicate of one that had one).
     const { rows: existing } = await client.query(
-      `SELECT id, CASE WHEN email <> '' THEN 'e:' || lower(email) ELSE 'n:' || lower(name) || '|' || phone END AS key
-         FROM customers WHERE lower(email) = ANY($1::text[]) OR (email = '' AND lower(name) = ANY($2::text[]))`,
+      `SELECT id, lower(email) AS email, 'n:' || lower(name) || '|' || phone AS name_key
+         FROM customers WHERE (email <> '' AND lower(email) = ANY($1::text[])) OR lower(name) = ANY($2::text[])`,
       [emails, names],
     );
-    const byKey = new Map(existing.map((e) => [e.key, e.id]));
+    const byKey = new Map();
+    for (const e of existing) {
+      if (e.email) byKey.set(`e:${e.email}`, e.id);
+      if (!byKey.has(e.name_key)) byKey.set(e.name_key, e.id);
+    }
     let created = 0, updated = 0, skipped = 0;
     for (const c of valid) {
       const id = byKey.get(c.key);
