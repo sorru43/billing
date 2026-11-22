@@ -6,7 +6,7 @@ import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '.
 import { toCsv } from '../pdf.js';
 import { ALERT_SQL, DEFAULT_ALERT } from '../stock.js';
 import { parseCsv } from './customers.js';
-import { lookupBarcode, LookupError, barcodeVariants, findInBarcodeList } from '../barcodeLookup.js';
+import { lookupBarcode, LookupError, barcodeVariants, findInBarcodeList, validCheckDigit } from '../barcodeLookup.js';
 import { groupVariants, saveMatrixGroups } from '../matrixGroups.js';
 
 const r = Router();
@@ -90,12 +90,13 @@ r.get('/search', h(async (req, res) => {
   if (!can(req, 'invoices', 'create') && !can(req, 'products', 'view') && !can(req, 'receiving', 'create')) return fail(res, 403, 'You do not have permission to do this');
   const q = String(req.query.q || '').trim().slice(0, 100);
   const { rows } = await query(
-    `${SELECT} WHERE p.status = true AND (p.matrix_id IS NULL OR m.status) AND ($1 = '' OR p.name ILIKE $2 OR p.barcode = $1)
-      ORDER BY (p.barcode = $1) DESC, p.name LIMIT 15`,
-    [q, likeEscape(q)],
+    `${SELECT} WHERE p.status = true AND (p.matrix_id IS NULL OR m.status) AND ($1 = '' OR p.name ILIKE $2 OR p.barcode = ANY($3::text[]))
+      ORDER BY (p.barcode = ANY($3::text[])) DESC, p.name LIMIT 15`,
+    [q, likeEscape(q), barcodeVariants(q)],
   );
   // Matrix parents come first (unless a barcode matched exactly): picking one opens the variant grid.
-  const exact = rows.some((p) => p.barcode && p.barcode === q);
+  const forms = barcodeVariants(q);
+  const exact = rows.some((p) => p.barcode && forms.includes(p.barcode));
   const matrices = exact ? [] : (await query(
     `SELECT m.id, m.name, m.attr1_name, m.attr2_name,
             count(p.id)::int AS variant_count, coalesce(sum(p.quantity), 0)::int AS total_qty
@@ -322,7 +323,13 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
       return;
     }
 
-    const barcode = raw.barcode ? String(raw.barcode).trim() : '';
+    let barcode = raw.barcode ? String(raw.barcode).trim() : '';
+    if (/^\d(\.\d+)?e\+?\d+$/i.test(barcode)) {
+      errors.push({ row: line, name, message: 'Barcode was turned into a number by Excel (like 8.42E+11). Format the column as Text and save again.' });
+      return;
+    }
+    // Excel drops a UPC's leading 0 (012345678905 → 12345678905): put it back when the check digit confirms it.
+    if (/^\d{11}$/.test(barcode) && validCheckDigit(`0${barcode}`)) barcode = `0${barcode}`;
     if (barcode && !/^[A-Za-z0-9\-_.]*$/.test(barcode)) {
       errors.push({ row: line, name, message: 'Barcode may only contain letters, numbers, - _ .' });
       return;

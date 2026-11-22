@@ -24,11 +24,28 @@ const isMasked = (key) => String(key || '').includes('•');
 export const normalizeBarcode = (raw) => String(raw || '').trim().replace(/[^0-9A-Za-z]/g, '');
 
 // A 12-digit UPC and its 13-digit EAN form (leading 0) are the same code, so either matches.
+// One UPC arrives in several forms: the 12-digit UPC-A a scanner reads, its 13-digit EAN form
+// (leading 0), and an 11-digit copy whose leading 0 Excel dropped. Each form finds the others.
 export function barcodeVariants(code) {
-  const codes = [code];
-  if (/^\d{12}$/.test(code)) codes.push(`0${code}`);
-  if (/^0\d{12}$/.test(code)) codes.push(code.slice(1));
-  return codes;
+  const codes = new Set([code]);
+  if (/^\d{11}$/.test(code)) {
+    codes.add(`0${code}`);
+    codes.add(`00${code}`);
+  }
+  if (/^\d{12}$/.test(code)) codes.add(`0${code}`);
+  if (/^0\d{11}$/.test(code)) codes.add(code.slice(1));
+  if (/^0\d{12}$/.test(code)) codes.add(code.slice(1));
+  if (/^00\d{11}$/.test(code)) codes.add(code.slice(2));
+  return [...codes];
+}
+
+// UPC/EAN check digit (GTIN-8/12/13/14): the last digit matches the weighted sum of the others.
+export function validCheckDigit(code) {
+  if (!/^\d{8,14}$/.test(code)) return false;
+  const d = [...code].map(Number);
+  const check = d.pop();
+  const sum = d.reverse().reduce((a, x, i) => a + x * (i % 2 === 0 ? 3 : 1), 0);
+  return (10 - (sum % 10)) % 10 === check;
 }
 
 // The store's imported barcode list (reference data, never products or stock).
