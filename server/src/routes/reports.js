@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { requirePerm } from '../auth.js';
-import { h, ok, fail, validate } from '../http.js';
+import { h, ok, fail, validate, isoDate, isIsoDate, BAD_DATE } from '../http.js';
 import { getSetting } from '../settings.js';
 import { ALERT_SQL } from '../stock.js';
 import { reportPdf, toCsv, PRICE_LEVELS } from '../pdf.js';
@@ -23,8 +23,8 @@ export const REPORT_TYPES = {
 const schema = z.object({
   type: z.enum(Object.keys(REPORT_TYPES)),
   to: z.string().trim().toLowerCase().email('Enter a valid email').max(200),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
-  until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
+  from: isoDate.optional().or(z.literal('')),
+  until: isoDate.optional().or(z.literal('')),
   categoryId: z.string().uuid().optional().or(z.literal('')),
   // blank = each product's own low stock alert level
   threshold: z.preprocess((v) => (v === '' || v == null ? null : v), z.coerce.number().int().min(0).max(1e6).nullable()).default(null),
@@ -153,6 +153,7 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
   let period = req.query.period || 'today';
   let from = req.query.from;
   let until = req.query.until;
+  for (const v of [from, until]) if (v && !isIsoDate(v)) return fail(res, 422, BAD_DATE);
 
   if (period === 'today') {
     from = req.query.from || todayStr;

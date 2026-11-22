@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query, tx } from '../db.js';
 import { requirePerm } from '../auth.js';
-import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
+import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape, isoDate } from '../http.js';
 import { purchaseOrderPdf } from '../pdf.js';
 import { sendMail, escapeHtml } from '../mailer.js';
 import { getSetting } from '../settings.js';
@@ -25,7 +25,7 @@ const itemsSchema = z
   )
   .min(1, 'Add at least one product')
   .max(1000);
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+const dateSchema = isoDate;
 
 const schema = z.object({
   vendorId: z.string().uuid('Choose a vendor'),

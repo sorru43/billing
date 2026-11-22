@@ -2,7 +2,7 @@ import express, { Router } from 'express';
 import { z } from 'zod';
 import { query, tx } from '../db.js';
 import { requirePerm, can } from '../auth.js';
-import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
+import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape, isoDate } from '../http.js';
 import { toCsv } from '../pdf.js';
 import { receiveCustomerPayment } from '../balance.js';
 
@@ -56,7 +56,7 @@ const totalsOut = (c) => {
 
 const paymentSchema = z.object({
   amount: z.coerce.number().positive('Amount must be greater than 0').max(1e11),
-  paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').default(() => new Date().toISOString().slice(0, 10)),
+  paymentDate: isoDate.default(() => new Date().toISOString().slice(0, 10)),
   paymentMethod: z.enum(['cash', 'check', 'zelle', 'bank_transfer', 'card', 'other', 'cheque', 'bank']).default('cash'),
   reference: z.string().trim().max(200).default(''),
   notes: z.string().max(2000).default(''),

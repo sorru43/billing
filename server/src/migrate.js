@@ -401,8 +401,31 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS edited_at timestamptz;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS edited_by uuid REFERENCES users(id) ON DELETE SET NULL;
 `;
 
+// Keep every document-number sequence ahead of the numbers already used. Rows added without the
+// sequence (demo data, an import, a restored backup) otherwise make the next "RCV_000001" (etc.)
+// collide with an existing one, and every new receiving/invoice/... fails until fixed by hand.
+const NUMBER_SEQUENCES = [
+  ['invoices', 'invoice_number', 'invoice_number_seq'],
+  ['receivings', 'receiving_number', 'receiving_number_seq'],
+  ['returns', 'return_number', 'return_number_seq'],
+  ['customer_payments', 'payment_number', 'customer_payment_seq'],
+  ['vendor_payments', 'payment_number', 'vendor_payment_seq'],
+  ['purchase_orders', 'po_number', 'purchase_order_seq'],
+];
+async function syncNumberSequences() {
+  for (const [table, column, seq] of NUMBER_SEQUENCES) {
+    const used = (await pool.query(`SELECT max(substring(${column} from '(\\d+)$')::bigint) AS n FROM ${table}`)).rows[0].n;
+    const next = (await pool.query(`SELECT CASE WHEN is_called THEN last_value + 1 ELSE last_value END AS n FROM ${seq}`)).rows[0].n;
+    if (used != null && Number(used) >= Number(next)) {
+      await pool.query(`SELECT setval($1, $2, true)`, [seq, used]);
+      console.log(`${seq}: moved past ${table}.${column} ${used}`);
+    }
+  }
+}
+
 async function main() {
   await pool.query(schema);
+  await syncNumberSequences();
   await pool.query("UPDATE invoices SET paid_amount = total WHERE status = 'paid' AND (paid_amount IS NULL OR paid_amount = 0);");
 
   const { rows } = await pool.query('SELECT count(*)::int AS n FROM users WHERE user_type = 1');

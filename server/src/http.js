@@ -29,6 +29,14 @@ export function validate(schema, body, res) {
   return null;
 }
 
+// A real calendar date as YYYY-MM-DD. The pattern alone let "2026-02-30" or "2026-13-01" through,
+// and Postgres then failed the whole request with a 500.
+export const isIsoDate = (v) =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) &&
+  new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
+export const isoDate = z.string().refine(isIsoDate, 'Use a real date (YYYY-MM-DD)');
+export const BAD_DATE = 'Use a real date (YYYY-MM-DD)';
+
 export const uuid = z.string().uuid();
 export const isUuid = (s) => uuid.safeParse(s).success;
 

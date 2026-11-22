@@ -739,7 +739,9 @@ r.put('/:id', requirePerm('products', 'edit'), h(async (req, res) => {
 
 r.patch('/:id/status', requirePerm('products', 'edit'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Product not found');
-  const { rowCount } = await query(`UPDATE products SET status=$1, updated_at=now() WHERE id=$2`, [Boolean(req.body?.status), req.params.id]);
+  // A missing or non-true/false status used to switch the product off.
+  if (typeof req.body?.status !== 'boolean') return fail(res, 422, 'Invalid status');
+  const { rowCount } = await query(`UPDATE products SET status=$1, updated_at=now() WHERE id=$2`, [req.body.status, req.params.id]);
   if (!rowCount) return fail(res, 404, 'Product not found');
   ok(res, null, 'Product status updated');
 }));

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query, tx } from '../db.js';
 import { requirePerm, requireSuperAdmin, can } from '../auth.js';
 import { config } from '../config.js';
-import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
+import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape, isoDate, isIsoDate, BAD_DATE } from '../http.js';
 import { getSetting } from '../settings.js';
 import { invoicePdf } from '../pdf.js';
 import { invoiceEmail, startRetentionWindow } from '../archive.js';
@@ -15,7 +15,7 @@ import {
 const r = Router();
 const PRICE_FIELD = { selling: 'selling_price', top_customer: 'top_customer_price', jobber: 'jobber_price' };
 const round2 = (n) => Math.round(n * 100) / 100;
-const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+const dateStr = isoDate;
 
 const schema = z.object({
   invoiceDate: dateStr,
@@ -367,7 +367,8 @@ r.patch('/:id/status', requirePerm('invoices', 'edit'), h(async (req, res) => {
   const method = String(req.body?.paymentMethod || 'cash').slice(0, 30);
   const reference = String(req.body?.reference || '').trim().slice(0, 200);
   const note = String(req.body?.notes || '').trim().slice(0, 2000);
-  const pDate = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.paymentDate || '') ? req.body.paymentDate : new Date().toISOString().slice(0, 10);
+  if (req.body?.paymentDate && !isIsoDate(req.body.paymentDate)) return fail(res, 422, BAD_DATE, { paymentDate: BAD_DATE });
+  const pDate = req.body?.paymentDate || new Date().toISOString().slice(0, 10);
 
   if (inv.customer_id) {
     // Saved customer: this invoice first, then older bills, then credit. Nothing is dropped.

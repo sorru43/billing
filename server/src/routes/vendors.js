@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query, tx } from '../db.js';
 import { payVendor } from '../balance.js';
 import { requirePerm, can } from '../auth.js';
-import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
+import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape, isIsoDate, BAD_DATE } from '../http.js';
 
 // Vendors (suppliers) for inventory receiving. Uses the `receiving` permission.
 const r = Router();
@@ -94,9 +94,10 @@ r.delete('/:id', requirePerm('receiving', 'delete'), h(async (req, res) => {
 
 // Pay a vendor: applied to the chosen receiving first (if any), then the oldest open
 // receivings; anything left over is kept as credit for the next receiving.
-const payDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : new Date().toISOString().slice(0, 10));
+const payDate = (v) => v || new Date().toISOString().slice(0, 10);
 r.post('/:id/payments', requirePerm('receiving', 'edit'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Vendor not found');
+  if (req.body?.paymentDate && !isIsoDate(req.body.paymentDate)) return fail(res, 422, BAD_DATE, { paymentDate: BAD_DATE });
   const amount = Math.round(Number(req.body?.amount) * 100) / 100;
   if (!(amount > 0) || amount > 1e11) return fail(res, 422, 'Enter a valid payment amount greater than 0');
   const result = await tx((client) => payVendor(client, {

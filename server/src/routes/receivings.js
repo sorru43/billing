@@ -3,13 +3,13 @@ import { z } from 'zod';
 import { query, tx } from '../db.js';
 import { requirePerm } from '../auth.js';
 import { payVendor, useVendorCredit } from '../balance.js';
-import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
+import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape, isoDate, isIsoDate, BAD_DATE } from '../http.js';
 
 // Receiving inventory from a vendor: adds stock, updates cost, and (when the cost
 // went up) raises all three price levels by the chosen rule.
 const r = Router();
 const round2 = (n) => Math.round(n * 100) / 100;
-const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+const dateStr = isoDate;
 const PRICE_FIELDS = ['selling_price', 'top_customer_price', 'jobber_price'];
 
 const schema = z.object({
@@ -166,7 +166,8 @@ r.patch('/:id/status', requirePerm('receiving', 'edit'), h(async (req, res) => {
   const method = String(req.body?.paymentMethod || 'cash').slice(0, 30);
   const ref = String(req.body?.reference || '').trim().slice(0, 200);
   const note = String(req.body?.notes || '').trim().slice(0, 2000);
-  const pDate = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.paymentDate || '') ? req.body.paymentDate : new Date().toISOString().slice(0, 10);
+  if (req.body?.paymentDate && !isIsoDate(req.body.paymentDate)) return fail(res, 422, BAD_DATE, { paymentDate: BAD_DATE });
+  const pDate = req.body?.paymentDate || new Date().toISOString().slice(0, 10);
   const memo = note ? `Receiving ${rcv.receiving_number} - ${note}` : `Receiving ${rcv.receiving_number}`;
 
   if (rcv.vendor_id) {

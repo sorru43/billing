@@ -160,7 +160,8 @@ export default function App() {
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
         </BrowserRouter>
-        <ToastContainer position="top-right" autoClose={3000} hideProgressBar theme="light" />
+        {/* top-center: top-right sat over every list page's "New ..." button, so the next click just closed the toast */}
+        <ToastContainer position="top-center" autoClose={3000} hideProgressBar theme="light" />
       </LanguageProvider>
     </AuthProvider>
   );
