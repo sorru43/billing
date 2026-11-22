@@ -32,6 +32,8 @@ export default function ReturnCreate() {
     try {
       const { data } = await api.get('/returns/lookup', { number: number.trim() });
       setInv(data);
+      // A walk-in has no account: credit can only come off what's still owed on this invoice.
+      setSettlement(!data.customerId && !(data.due > 0) ? 'refund' : 'credit');
       setQty({});
       setRestock(Object.fromEntries(data.lines.map((l) => [l.productId, true])));
     } catch (err) {
@@ -44,20 +46,22 @@ export default function ReturnCreate() {
 
   const chosen = inv ? inv.lines.filter((l) => Number(qty[l.productId]) > 0) : [];
   const total = round2(chosen.reduce((a, l) => a + Number(qty[l.productId]) * l.price, 0));
+  const walkIn = inv && !inv.customerId;
+  const creditTooBig = walkIn && settlement === 'credit' && total > (inv?.due || 0);
 
   const save = async () => {
     if (!chosen.length) return setErrors({ items: 'Enter a quantity for at least one item' });
     setBusy(true);
     setErrors({});
     try {
-      const { data } = await api.post('/returns', {
+      const res = await api.post('/returns', {
         invoiceId: inv.id,
         settlement,
         reason,
         items: chosen.map((l) => ({ productId: l.productId, quantity: Number(qty[l.productId]), restock: Boolean(restock[l.productId]) })),
       });
-      toast.success(`${data.returnNumber} saved`);
-      navigate(`/admin/returns/view/${data.id}`);
+      toast.success(res.message || `${res.data.returnNumber} saved`, { autoClose: 6000 });
+      navigate(`/admin/returns/view/${res.data.id}`);
     } catch (err) {
       const mapped = {};
       for (const [k, v] of Object.entries(err.errors || {})) {
@@ -125,12 +129,24 @@ export default function ReturnCreate() {
             </table>
           </div>
           {errors.items && <p className="text-sm text-red-600">{errors.items}</p>}
+          {creditTooBig && (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+              A walk-in customer has no account to keep credit on: only {money(inv.due)} can come off this invoice. Choose Refund, or return less.
+            </p>
+          )}
           <div className="grid md:grid-cols-2 gap-4">
             <fieldset className="space-y-1 text-sm text-gray-700">
               <legend className="font-medium mb-1">How is the customer paid back?</legend>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" checked={settlement === 'credit'} onChange={() => setSettlement('credit')} />
-                Credit to their account (lowers what they owe)
+              <label className={`flex items-start gap-2 ${walkIn && !(inv.due > 0) ? 'opacity-50' : 'cursor-pointer'}`}>
+                <input type="radio" className="mt-1" disabled={walkIn && !(inv.due > 0)} checked={settlement === 'credit'} onChange={() => setSettlement('credit')} />
+                {walkIn ? (
+                  <span>Take it off this invoice&apos;s unpaid balance ({money(inv.due)} left to pay)</span>
+                ) : (
+                  <span>
+                    Credit to their account: pays what&apos;s left on this invoice ({money(inv.due)}) first, then their older bills; the rest
+                    stays as credit for the next invoice
+                  </span>
+                )}
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="radio" checked={settlement === 'refund'} onChange={() => setSettlement('refund')} />
@@ -145,7 +161,7 @@ export default function ReturnCreate() {
           <div className="flex flex-wrap justify-end items-center gap-3">
             <p className="text-lg font-bold text-gray-950 mr-auto">Return total: {money(total)}</p>
             <CancelButton onClick={() => navigate('/admin/returns')} />
-            <SubmitButton type="button" onClick={save} isLoading={busy} isDisabled={!chosen.length}>Save Return</SubmitButton>
+            <SubmitButton type="button" onClick={save} isLoading={busy} isDisabled={!chosen.length || creditTooBig}>Save Return</SubmitButton>
           </div>
         </>
       )}

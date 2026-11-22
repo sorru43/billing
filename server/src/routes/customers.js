@@ -35,7 +35,8 @@ const TOTALS_SQL = `
   (SELECT coalesce(sum(total), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_total,
   (SELECT coalesce(sum(CASE WHEN i.status = 'paid' THEN i.total ELSE coalesce(i.paid_amount, 0) END), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_paid,
   (SELECT coalesce(sum(CASE WHEN i.status = 'paid' THEN 0 ELSE (i.total - coalesce(i.paid_amount, 0)) END), 0) FROM invoices i WHERE i.customer_id = c.id) AS inv_unpaid,
-  (SELECT coalesce(sum(total), 0) FROM returns rt WHERE rt.customer_id = c.id AND rt.settlement = 'credit') AS credits,
+  -- Only older credit returns: newer ones are already applied to invoices / credit_balance.
+  (SELECT coalesce(sum(total), 0) FROM returns rt WHERE rt.customer_id = c.id AND rt.settlement = 'credit' AND NOT rt.applied) AS credits,
   c.credit_balance AS credit_balance`;
 const round2 = (n) => Math.round(n * 100) / 100;
 const totalsOut = (c) => {

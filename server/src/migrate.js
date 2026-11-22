@@ -391,6 +391,11 @@ CREATE TABLE IF NOT EXISTS customer_prices (
 CREATE UNIQUE INDEX IF NOT EXISTS customer_prices_product_uq ON customer_prices (customer_id, product_id) WHERE product_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS customer_prices_matrix_uq ON customer_prices (customer_id, matrix_id) WHERE matrix_id IS NOT NULL;
 
+-- Credit returns: applied = the return's value was put toward the invoice / customer credit when it
+-- was saved (from 2026-11-22). Older credit returns (applied = false) still lower the customer's
+-- balance as a separate offset, the way they always did.
+ALTER TABLE returns ADD COLUMN IF NOT EXISTS applied boolean NOT NULL DEFAULT false;
+
 -- Invoice edits: when and by whom an invoice was last changed after it was created.
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS edited_at timestamptz;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS edited_by uuid REFERENCES users(id) ON DELETE SET NULL;
