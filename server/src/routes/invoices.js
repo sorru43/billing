@@ -8,6 +8,7 @@ import { getSetting } from '../settings.js';
 import { invoicePdf } from '../pdf.js';
 import { invoiceEmail, startRetentionWindow } from '../archive.js';
 import { receiveCustomerPayment, useCustomerCredit } from '../balance.js';
+import { rememberPrices } from '../customerPrices.js';
 import {
   LOCKED_MESSAGE, seesAllInvoices, lockState, openWindow, closeAfterPrint, requestAccess, decideRequest, pendingRequests, hasOpenWindow,
 } from '../invoiceAccess.js';
@@ -55,6 +56,8 @@ const schema = z.object({
         rate: z.coerce.number().min(0).max(1e11),
         discount: z.coerce.number().min(0).max(1e11).default(0),
         taxRate: z.coerce.number().min(0).max(100).default(0),
+        // the price was typed on this invoice and should become the saved customer's own price
+        remember: z.boolean().default(false),
       }),
     )
     .min(1, 'Add at least one product')
@@ -123,6 +126,8 @@ function buildLines(b, byId) {
     total: round2(subtotal - discountTotal + taxTotal),
   };
 }
+
+const pricesNote = (n) => `${n} price${n === 1 ? '' : 's'} saved as this customer's own`;
 
 // Link to the saved customer: the one picked, else a match by email, else by a unique exact name.
 async function resolveCustomer(client, b) {
@@ -291,6 +296,7 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
        config.invoiceRetentionHours, customerId],
     );
     const invoiceId = rows[0].id;
+    const remembered = await rememberPrices(client, { customerId, items: b.items, byId, priceLevel: b.priceLevel, invoiceNumber: number });
     // The creator can open and print it now; for a locked-out cashier this window closes on the first print.
     await openWindow(client, invoiceId, req.user.id);
 
@@ -333,10 +339,11 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
       }
     }
 
-    return { invoice: rows[0] };
+    return { invoice: rows[0], remembered };
   });
   if (result.errors) return fail(res, 422, 'Please fix the highlighted items', result.errors);
-  ok(res, fullOut(result.invoice), 'Invoice created', 201);
+  const msg = result.remembered ? `Invoice created. ${pricesNote(result.remembered)}` : 'Invoice created';
+  ok(res, { ...fullOut(result.invoice), pricesRemembered: result.remembered }, msg, 201);
 }));
 
 r.patch('/:id/status', requirePerm('invoices', 'edit'), h(async (req, res) => {
@@ -520,6 +527,7 @@ r.put('/:id', requirePerm('invoices', 'edit'), h(async (req, res) => {
       [customerId, b.customerName, b.invoiceDate, total, paid, status, JSON.stringify(items), inv.id],
     );
     if (status === 'paid' && inv.status !== 'paid') await startRetentionWindow(client, inv.id);
+    const remembered = await rememberPrices(client, { customerId, items: b.items, byId, priceLevel: b.priceLevel, invoiceNumber: inv.invoice_number });
 
     if (customerId) {
       if (creditAdded > 0) await client.query(`UPDATE customers SET credit_balance = credit_balance + $1 WHERE id = $2`, [creditAdded, customerId]);
@@ -527,14 +535,15 @@ r.put('/:id', requirePerm('invoices', 'edit'), h(async (req, res) => {
       await useCustomerCredit(client, customerId, inv.id);
     }
     const saved = (await client.query(`SELECT * FROM invoices WHERE id=$1`, [inv.id])).rows[0];
-    return { invoice: saved, creditAdded };
+    return { invoice: saved, creditAdded, remembered };
   });
 
   if (!result.invoice) return fail(res, result.status, result.message, result.errors);
-  const msg = result.creditAdded > 0
+  let msg = result.creditAdded > 0
     ? `Invoice updated. ${result.creditAdded.toFixed(2)} paid above the new total went to the customer's credit`
     : 'Invoice updated';
-  ok(res, { ...fullOut(result.invoice), creditAdded: result.creditAdded }, msg);
+  if (result.remembered) msg += `. ${pricesNote(result.remembered)}`;
+  ok(res, { ...fullOut(result.invoice), creditAdded: result.creditAdded, pricesRemembered: result.remembered }, msg);
 }));
 
 // Send the invoice to the customer (or another address).

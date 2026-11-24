@@ -796,11 +796,13 @@ const EMPTY_FORM = {
   notes: '',
   status: 'unpaid',
 };
-const NO_PRICES = { products: new Map(), matrices: new Map() };
+// rise: product/matrix id -> % their price went up with the cost since it was given
+const NO_PRICES = { products: new Map(), matrices: new Map(), rise: new Map() };
 
 // New invoice, or (with :id) editing a saved one. Each line's price comes from the customer's own
 // price for that product (or its matrix item) when there is one, else from the price level; a price
 // typed by hand ("manual") or kept from the saved invoice ("saved") is never re-priced automatically.
+// A price typed for a saved customer becomes their own price (unless "Keep as their price" is unticked).
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { id: editId } = useParams();
@@ -838,8 +840,12 @@ export default function InvoiceCreate() {
         if (!live) return;
         const products = new Map();
         const matrices = new Map();
-        for (const x of r.data) (x.productId ? products : matrices).set(x.productId || x.matrixId, Number(x.price));
-        setCustPrices({ products, matrices });
+        const rise = new Map();
+        for (const x of r.data) {
+          (x.productId ? products : matrices).set(x.productId || x.matrixId, Number(x.price));
+          if (x.price > x.givenPrice && x.costBasis > 0) rise.set(x.productId || x.matrixId, Math.round((x.cost / x.costBasis - 1) * 1000) / 10);
+        }
+        setCustPrices({ products, matrices, rise });
       })
       .catch(() => live && setCustPrices(NO_PRICES));
     return () => {
@@ -912,8 +918,9 @@ export default function InvoiceCreate() {
 
   // The price for a product on this invoice: the customer's own (product, then its matrix item), else the level's.
   const priceOf = (p, matrixId = p.matrix?.id, field = level.field, prices = custPrices) => {
-    const own = prices.products.get(p.id) ?? (matrixId ? prices.matrices.get(matrixId) : undefined);
-    return own !== undefined ? { rate: own, source: 'customer' } : { rate: Number(p[field]), source: 'level' };
+    const ownId = prices.products.has(p.id) ? p.id : matrixId && prices.matrices.has(matrixId) ? matrixId : null;
+    if (!ownId) return { rate: Number(p[field]), source: 'level', rise: 0 };
+    return { rate: prices.products.get(ownId) ?? prices.matrices.get(ownId), source: 'customer', rise: prices.rise.get(ownId) || 0 };
   };
 
   // New customer prices (customer picked or cleared): re-price the lines that were priced automatically.
@@ -1101,6 +1108,7 @@ export default function InvoiceCreate() {
       description: l.description,
       quantity: Number(l.quantity),
       rate: Number(l.rate),
+      remember: Boolean(form.customerId) && l.source === 'manual' && l.remember !== false,
     }));
     try {
       if (editing) {
@@ -1111,7 +1119,8 @@ export default function InvoiceCreate() {
         return;
       }
       const { data } = await api.post('/invoices', { ...form, payment: activePayment, items });
-      toast.success(`Invoice ${data.invoiceNumber} created`);
+      const kept = data.pricesRemembered;
+      toast.success(`Invoice ${data.invoiceNumber} created${kept ? `. ${kept} price${kept === 1 ? '' : 's'} saved as ${data.customerName}'s own` : ''}`);
       setPaymentModalOpen(false);
       // Staff who can make invoices but not open the invoice list print it from here.
       if (can('invoices', 'view')) navigate(`/admin/invoices/view/${data.id}`);
@@ -1355,7 +1364,21 @@ export default function InvoiceCreate() {
                           className={`${smallCls} ${l.source === 'customer' ? 'border-emerald-400 bg-emerald-50/40' : ''}`}
                         />
                         {l.product && l.source === 'customer' && (
-                          <p className="text-[11px] text-emerald-700 mt-1">{t('inv.customer_price', 'Customer price')}</p>
+                          <p className="text-[11px] text-emerald-700 mt-1 whitespace-nowrap">
+                            {t('inv.customer_price', 'Customer price')}
+                            {l.rise > 0 && ` · ${t('inv.cost_up', 'cost up')} ${l.rise}%`}
+                          </p>
+                        )}
+                        {l.product && l.source === 'manual' && form.customerId && Number(l.rate) > 0 && (
+                          <label className="mt-1 flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer select-none whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={l.remember !== false}
+                              onChange={(e) => setRow(l.key, { remember: e.target.checked })}
+                              className="h-3 w-3 accent-purple-600"
+                            />
+                            {t('inv.remember_price', 'Keep as their price')}
+                          </label>
                         )}
                       </td>
                       <td className="px-3 py-3 text-right font-bold text-gray-950 pt-5">{money(l.amount)}</td>

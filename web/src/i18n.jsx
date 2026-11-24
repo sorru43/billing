@@ -96,6 +96,9 @@ export const translations = {
     'inv.payment_entered': 'Payment entered',
     'inv.search_customer': 'Search customer by name or phone...',
     'inv.add_new_customer': 'Add New Customer',
+    'inv.customer_price': 'Customer price',
+    'inv.remember_price': 'Keep as their price',
+    'inv.cost_up': 'cost up',
     'inv.extra_info': 'Extra Information',
 
     // Customers
@@ -315,6 +318,9 @@ export const translations = {
     'inv.payment_entered': 'Paiement saisi',
     'inv.search_customer': 'Rechercher client par nom ou tél...',
     'inv.add_new_customer': 'Ajouter un client',
+    'inv.customer_price': 'Prix du client',
+    'inv.remember_price': 'Garder comme son prix',
+    'inv.cost_up': 'coût en hausse de',
     'inv.extra_info': 'Informations complémentaires',
 
     // Customers

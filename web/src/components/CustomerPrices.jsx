@@ -13,7 +13,8 @@ const priceInput =
   'w-28 h-9 px-2 border border-gray-300 rounded-md text-sm text-gray-950 focus:outline-none focus:ring-1 focus:ring-purple-600';
 
 // A customer's own prices. On their invoices these are used instead of their price level;
-// a price on a matrix item covers every flavor of it.
+// a price on a matrix item covers every flavor of it. Prices typed on their invoices land here too,
+// and each one follows the item's cost up by the same percentage (never below the price given).
 export default function CustomerPrices({ customer }) {
   const { can } = useAuth();
   const money = useMoney();
@@ -90,6 +91,8 @@ export default function CustomerPrices({ customer }) {
       <p className="text-xs text-gray-500">
         {customer.name}&apos;s own prices. On their invoices these are used instead of their price level (
         <b>{LEVEL_LABELS[level]}</b>). A price on a matrix item covers all its flavors; a price on one flavor beats it.
+        A price typed on one of their invoices is kept here for next time. When an item&apos;s cost goes up, their price goes up
+        by the same percentage; it never drops below the price you gave.
       </p>
 
       {canEdit && (
@@ -133,7 +136,7 @@ export default function CustomerPrices({ customer }) {
               <th className={th}>Item</th>
               <th className={`${th} text-right`}>{LEVEL_LABELS[level]} price</th>
               <th className={`${th} text-right`}>Their price</th>
-              <th className={th}>Updated</th>
+              <th className={th}>Set</th>
               {canEdit && <th className={th} />}
             </tr>
           </thead>
@@ -141,6 +144,7 @@ export default function CustomerPrices({ customer }) {
             {rows.map((x) => {
               const normal = x.levelPrices[level];
               const draft = drafts[x.id];
+              const risen = x.price > x.givenPrice && x.costBasis > 0;
               return (
                 <tr key={x.id}>
                   <td className={td}>
@@ -170,9 +174,17 @@ export default function CustomerPrices({ customer }) {
                     ) : (
                       <span className="font-semibold text-gray-950">{money(x.price)}</span>
                     )}
+                    {risen && (
+                      <p className="text-[11px] text-amber-700" title={`Cost was ${money(x.costBasis)} when this price was given; it is ${money(x.cost)} now`}>
+                        Given {money(x.givenPrice)} · cost {money(x.costBasis)} → {money(x.cost)} (+{Math.round((x.cost / x.costBasis - 1) * 1000) / 10}%)
+                      </p>
+                    )}
                     {x.price < normal && <p className="text-[11px] text-emerald-700">{money(normal - x.price)} below normal</p>}
                   </td>
-                  <td className={td}>{formatDate(x.updatedAt)}</td>
+                  <td className={td}>
+                    {formatDate(x.updatedAt)}
+                    <p className="text-[11px] text-gray-400">{x.invoiceNumber ? `From ${x.invoiceNumber}` : 'Set here'}</p>
+                  </td>
                   {canEdit && (
                     <td className={`${td} text-right`}>
                       <button

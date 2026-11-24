@@ -5,6 +5,7 @@ import { requirePerm, can } from '../auth.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape, isoDate } from '../http.js';
 import { toCsv } from '../pdf.js';
 import { receiveCustomerPayment } from '../balance.js';
+import { ITEM_COST_SQL, basisSql, followCost } from '../customerPrices.js';
 
 const r = Router();
 
@@ -139,7 +140,8 @@ const priceSchema = z
   .refine((b) => Boolean(b.productId) !== Boolean(b.matrixId), { message: 'Choose a product or a matrix item', path: ['productId'] });
 
 const PRICES_SQL = `
-  SELECT cp.id, cp.product_id, cp.matrix_id, cp.price, cp.updated_at,
+  SELECT cp.id, cp.product_id, cp.matrix_id, cp.price, cp.updated_at, cp.cost_basis, cp.invoice_number,
+         ${ITEM_COST_SQL} AS item_cost,
          coalesce(p.name, m.name) AS name, p.barcode,
          coalesce(p.selling_price, m.selling_price) AS selling_price,
          coalesce(p.top_customer_price, m.top_customer_price) AS top_customer_price,
@@ -157,7 +159,12 @@ const priceOut = (x) => ({
   barcode: x.barcode || '',
   isMatrix: Boolean(x.matrix_id),
   variantCount: x.matrix_id ? x.variant_count : null,
-  price: Number(x.price),
+  // price = what their invoices use now: the given price, raised as far as the cost has risen since
+  price: followCost(x.price, x.cost_basis, x.item_cost),
+  givenPrice: Number(x.price),
+  costBasis: Number(x.cost_basis || 0),
+  cost: Number(x.item_cost || 0),
+  invoiceNumber: x.invoice_number || null,
   levelPrices: { selling: Number(x.selling_price), top_customer: Number(x.top_customer_price), jobber: Number(x.jobber_price) },
   updatedAt: x.updated_at,
 });
@@ -183,8 +190,10 @@ r.put('/:id/prices', requirePerm('customers', 'edit'), h(async (req, res) => {
   if (!target.rowCount) return fail(res, 404, b.productId ? 'Product not found' : 'Matrix item not found');
   const conflict = b.productId ? '(customer_id, product_id) WHERE product_id IS NOT NULL' : '(customer_id, matrix_id) WHERE matrix_id IS NOT NULL';
   const { rows } = await query(
-    `INSERT INTO customer_prices (customer_id, product_id, matrix_id, price) VALUES ($1, $2, $3, $4)
-     ON CONFLICT ${conflict} DO UPDATE SET price = EXCLUDED.price, updated_at = now() RETURNING id`,
+    `INSERT INTO customer_prices (customer_id, product_id, matrix_id, price, cost_basis, invoice_number)
+     VALUES ($1, $2, $3, $4, ${basisSql('$2', '$3')}, NULL)
+     ON CONFLICT ${conflict} DO UPDATE SET price = EXCLUDED.price, cost_basis = EXCLUDED.cost_basis, invoice_number = NULL, updated_at = now()
+     RETURNING id`,
     [req.params.id, b.productId, b.matrixId, b.price],
   );
   const saved = (await query(`${PRICES_SQL} AND cp.id = $2`, [req.params.id, rows[0].id])).rows[0];

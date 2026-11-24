@@ -399,6 +399,18 @@ ALTER TABLE returns ADD COLUMN IF NOT EXISTS applied boolean NOT NULL DEFAULT fa
 -- Invoice edits: when and by whom an invoice was last changed after it was created.
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS edited_at timestamptz;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS edited_by uuid REFERENCES users(id) ON DELETE SET NULL;
+
+-- Customer prices follow the cost up. cost_basis = the item's cost when the price was given (a matrix
+-- item: its dearest flavor); when the cost is higher now, the price rises by the same percentage.
+-- invoice_number = the invoice the price was remembered from (NULL = set on the Custom Prices tab).
+ALTER TABLE customer_prices ADD COLUMN IF NOT EXISTS cost_basis numeric(14,2);
+ALTER TABLE customer_prices ADD COLUMN IF NOT EXISTS invoice_number text;
+UPDATE customer_prices cp SET cost_basis = coalesce(
+    (SELECT p.cost FROM products p WHERE p.id = cp.product_id),
+    (SELECT max(v.cost) FROM products v WHERE v.matrix_id = cp.matrix_id),
+    (SELECT m.cost FROM product_matrices m WHERE m.id = cp.matrix_id),
+    0)
+ WHERE cp.cost_basis IS NULL;
 `;
 
 // Keep every document-number sequence ahead of the numbers already used. Rows added without the
