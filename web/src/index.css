@@ -15,8 +15,23 @@
   --color-indigo-600: oklch(64.84% .187 258.73);
 }
 
+/* Printing (invoice, purchase order, receiving, return): only the document goes on paper.
+   With a page margin of 0 the browser has no room for its own header and footer (the date and tab
+   title on top, the page link and "1/1" at the bottom). The paper margin comes from .print-edge
+   instead: a blank strip in Layout.jsx that the browser repeats at the top and bottom of every
+   printed page, the way it repeats a table's header and footer. On screen the wrappers do nothing. */
+@page { margin: 0; }
+.print-frame, .print-body { display: contents; }
+.print-edge { display: none; }
+
 @media print {
   aside, header, .no-print { display: none !important; }
-  main { overflow: visible !important; padding: 0 !important; }
-  .h-screen { height: auto !important; }
+  /* the app shell is a fixed-height scrolling box on screen; on paper it flows over the pages */
+  .h-screen, .h-screen > div { display: block !important; height: auto !important; overflow: visible !important; }
+  main { overflow: visible !important; padding: 0 12mm !important; }
+  .print-frame { display: table; width: 100%; }
+  .print-body { display: table-row-group; }
+  .print-edge { display: table-header-group; break-inside: avoid; }
+  .print-edge-bottom { display: table-footer-group; }
+  .print-edge > div { height: 12mm; }
 }

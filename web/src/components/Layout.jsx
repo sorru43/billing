@@ -366,7 +366,14 @@ export default function Layout() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header toggleSidebar={() => setIsOpen((o) => !o)} />
         <main className="flex-1 overflow-x-hidden overflow-y-auto p-4">
-          <Outlet />
+          {/* On paper, .print-edge is the page margin on every printed page (see index.css). */}
+          <div className="print-frame">
+            <div className="print-edge" aria-hidden="true"><div /></div>
+            <div className="print-body">
+              <Outlet />
+            </div>
+            <div className="print-edge print-edge-bottom" aria-hidden="true"><div /></div>
+          </div>
         </main>
       </div>
     </div>
