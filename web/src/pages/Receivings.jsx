@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'react-toastify';
 import { CircleCheckBig, DollarSign, Eye, Undo2, X } from 'lucide-react';
 import { api } from '../api.js';
+import { confirmUnpaidReceiving, localToday } from '../unpaid.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
 import { ListToolbar, PageHeader, Pagination, Row, StatusBadge, Table, TableState } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
@@ -23,9 +24,10 @@ export default function Receivings() {
   }, [vendorId]);
 
   const setStatus = async (x, status) => {
+    if (status === 'unpaid' && !confirmUnpaidReceiving(x.receivingNumber)) return;
     try {
-      await api.patch(`/receivings/${x.id}/status`, { status });
-      toast.success(`Vendor invoice marked ${status}`);
+      const r = await api.patch(`/receivings/${x.id}/status`, { status, paymentDate: localToday() });
+      toast.success(r.message || `Vendor invoice marked ${status}`, { autoClose: 6000 });
       list.reload();
     } catch (e) {
       toast.error(e.message);

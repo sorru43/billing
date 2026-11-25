@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
 import { Check, CircleCheckBig, Eye, KeyRound, Lock, Mail, Trash2, Undo2, X } from 'lucide-react';
 import { api } from '../api.js';
+import { confirmUnpaidInvoice, localToday } from '../unpaid.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
 import { Avatar, ListToolbar, PageHeader, Pagination, Row, StatusBadge, Table, TableState } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
@@ -94,9 +95,10 @@ export default function Invoices() {
   const isAdmin = user?.user_type === 1;
 
   const setStatus = async (inv, status) => {
+    if (status === 'unpaid' && !confirmUnpaidInvoice(inv.invoiceNumber)) return;
     try {
-      await api.patch(`/invoices/${inv.id}/status`, { status });
-      toast.success(`Invoice marked ${status}`);
+      const r = await api.patch(`/invoices/${inv.id}/status`, { status, paymentDate: localToday() });
+      toast.success(r.message || `Invoice marked ${status}`, { autoClose: 6000 });
       list.reload();
     } catch (e) {
       toast.error(e.message);

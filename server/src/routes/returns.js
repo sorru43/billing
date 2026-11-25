@@ -5,12 +5,15 @@ import { requirePerm } from '../auth.js';
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 import { useCustomerCredit } from '../balance.js';
 import { startRetentionWindow } from '../archive.js';
+import { returnMoney, moneyPaid } from '../returnMoney.js';
 
 // Returns against an invoice. Items come back at the price the customer actually
 // paid on that invoice (never today's list price), optionally back into stock.
 //
 // Settlement:
-//   refund: money is handed back now; balances don't change.
+//   refund: money is handed back now, but only money that was really paid on this invoice and not
+//           refunded yet. Any part of the return above that was never paid for, so it comes off what
+//           the invoice still owes instead (same path as a credit). A fully paid invoice: all cash.
 //   credit: the return's value pays what is still owed on this invoice. For a saved customer any
 //           rest pays their oldest open bills and then stays as credit for the next invoice (the
 //           same path as an overpayment). A walk-in has no account to keep credit on, so a credit
@@ -39,6 +42,8 @@ const out = (x) => ({
   id: x.id, returnNumber: x.return_number, invoiceId: x.invoice_id, invoiceNumber: x.invoice_number,
   customerId: x.customer_id, customerName: x.customer_name, settlement: x.settlement, items: x.items,
   total: x.total, reason: x.reason, createdAt: x.created_at,
+  // cash handed back / taken off the invoice itself (null on returns saved before these were recorded)
+  refundAmount: x.refund_amount, appliedAmount: x.applied_amount,
 });
 
 // Quantities already returned per product on one invoice. Matched by invoice id: numbers can be
@@ -87,6 +92,8 @@ r.get('/lookup', requirePerm('returns', 'create'), h(async (req, res) => {
     customerId: inv.customer_id, status: inv.status, total: inv.total,
     paidAmount: Number(inv.paid_amount) || 0,
     due: Math.max(0, round2(Number(inv.total) - (Number(inv.paid_amount) || 0))),
+    // the most a refund can hand back in cash: money paid on this invoice and not refunded yet
+    refundable: moneyPaid(inv.paid_amount, await returnMoney({ query }, inv.id)),
     lines: invoiceLines(inv).map((l) => ({ ...l, returned: done.get(l.productId) || 0, returnable: l.sold - (done.get(l.productId) || 0) })),
   });
 }));
@@ -126,13 +133,22 @@ r.post('/', requirePerm('returns', 'create'), h(async (req, res) => {
     const invTotal = Number(inv.total);
     const invPaid = round2(Number(inv.paid_amount) || 0);
     const due = Math.max(0, round2(invTotal - invPaid));
-    if (b.settlement === 'credit' && !inv.customer_id && total > due) {
-      return {
-        message: due > 0
-          ? `This walk-in invoice only has ${due.toFixed(2)} left to pay, so a credit can't cover ${total.toFixed(2)}. Choose Refund, or return less.`
-          : `This walk-in invoice is already paid, so there is nothing to credit. Choose Refund.`,
-        errors: { settlement: 'Choose Refund for a walk-in customer' },
-      };
+    const credit = b.settlement === 'credit';
+    // cash: handed back now. offBill: comes off what is owed (this invoice first).
+    let cash = credit ? 0 : Math.min(total, moneyPaid(invPaid, await returnMoney(client, inv.id)));
+    let offBill = round2(total - cash);
+    if (!inv.customer_id && offBill > due) {
+      if (credit) {
+        return {
+          message: due > 0
+            ? `This walk-in invoice only has ${due.toFixed(2)} left to pay, so a credit can't cover ${total.toFixed(2)}. Choose Refund, or return less.`
+            : `This walk-in invoice is already paid, so there is nothing to credit. Choose Refund.`,
+          errors: { settlement: 'Choose Refund for a walk-in customer' },
+        };
+      }
+      // A walk-in has no account: what can't come off this invoice is handed back after all.
+      offBill = due;
+      cash = round2(total - offBill);
     }
 
     const items = [];
@@ -146,47 +162,48 @@ r.post('/', requirePerm('returns', 'create'), h(async (req, res) => {
       }
       items.push({ productId: it.productId, name: l.name, barcode: l.barcode, quantity: it.quantity, price: l.price, amount, restocked });
     }
-    const credit = b.settlement === 'credit';
-    const { rows: n } = await client.query(`SELECT nextval('return_number_seq') AS n`);
-    const { rows: saved } = await client.query(
-      `INSERT INTO returns (return_number, invoice_id, invoice_number, customer_id, customer_name, settlement, items, total, reason, created_by, applied)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [`RET_${String(n[0].n).padStart(6, '0')}`, inv.id, inv.invoice_number, inv.customer_id, inv.customer_name, b.settlement,
-       JSON.stringify(items), total, b.reason, req.user.id, credit],
-    );
 
-    // Put a credit return's value to work (see the note at the top).
+    // Put the part that comes off what is owed to work (see the note at the top).
     let applied = null;
-    if (credit && total > 0) {
+    if (offBill > 0) {
       if (inv.customer_id) {
-        await client.query(`UPDATE customers SET credit_balance = credit_balance + $1 WHERE id = $2`, [total, inv.customer_id]);
+        await client.query(`UPDATE customers SET credit_balance = credit_balance + $1 WHERE id = $2`, [offBill, inv.customer_id]);
         await useCustomerCredit(client, inv.customer_id, inv.id);
         const after = (await client.query(`SELECT paid_amount FROM invoices WHERE id = $1`, [inv.id])).rows[0];
         const left = round2(Number((await client.query(`SELECT credit_balance FROM customers WHERE id = $1`, [inv.customer_id])).rows[0].credit_balance));
         applied = { toInvoice: round2(Number(after.paid_amount) - invPaid), creditBalance: left };
       } else {
-        const paid = round2(invPaid + total);
+        const paid = round2(invPaid + offBill);
         const status = paid >= invTotal && invTotal > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
         await client.query(`UPDATE invoices SET paid_amount = $1, status = $2 WHERE id = $3`, [paid, status, inv.id]);
         await client.query(`UPDATE customer_sales_records SET paid_amount = $1, status = $2 WHERE invoice_id = $3`, [paid, status, inv.id]);
         if (status === 'paid' && inv.status !== 'paid') await startRetentionWindow(client, inv.id);
-        applied = { toInvoice: total, creditBalance: 0 };
+        applied = { toInvoice: offBill, creditBalance: 0 };
       }
     }
+    const { rows: n } = await client.query(`SELECT nextval('return_number_seq') AS n`);
+    const { rows: saved } = await client.query(
+      `INSERT INTO returns (return_number, invoice_id, invoice_number, customer_id, customer_name, settlement, items, total, reason, created_by,
+                            applied, applied_amount, refund_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [`RET_${String(n[0].n).padStart(6, '0')}`, inv.id, inv.invoice_number, inv.customer_id, inv.customer_name, b.settlement,
+       JSON.stringify(items), total, b.reason, req.user.id, credit || offBill > 0, applied?.toInvoice || 0, cash],
+    );
     return { ret: saved[0], applied };
   });
   if (result.notFound) return fail(res, 404, 'Invoice not found');
   if (result.errors) return fail(res, 422, result.message || 'Please fix the highlighted items', result.errors);
-  let msg = 'Return saved';
-  if (result.applied) {
-    const { toInvoice, creditBalance } = result.applied;
-    const rest = round2(Number(result.ret.total) - toInvoice);
-    const parts = [];
-    if (toInvoice > 0) parts.push(`${toInvoice.toFixed(2)} taken off ${result.ret.invoice_number}`);
-    if (rest > 0) parts.push(`${rest.toFixed(2)} credited to the customer's account`);
-    msg = `Return saved. ${parts.join(', ')}`;
-    if (creditBalance > 0) msg += ` (${creditBalance.toFixed(2)} credit available)`;
-  }
+  // Say where the return's value went: cash back, off this invoice, and/or onto the customer's account.
+  const cash = round2(Number(result.ret.refund_amount) || 0);
+  const { toInvoice = 0, creditBalance = 0 } = result.applied || {};
+  const rest = round2(Number(result.ret.total) - cash - toInvoice);
+  const refund = result.ret.settlement === 'refund';
+  const parts = [];
+  if (cash > 0) parts.push(`refund ${cash.toFixed(2)} to the customer`);
+  if (toInvoice > 0) parts.push(`${toInvoice.toFixed(2)} taken off ${result.ret.invoice_number}${refund ? ' (that part was not paid yet)' : ''}`);
+  if (rest > 0) parts.push(`${rest.toFixed(2)} credited to the customer's account`);
+  let msg = parts.length ? `Return saved. ${parts.join(', ')}` : 'Return saved';
+  if (creditBalance > 0) msg += ` (${creditBalance.toFixed(2)} credit available)`;
   ok(res, { ...out(result.ret), applied: result.applied }, msg, 201);
 }));
 

@@ -9,6 +9,7 @@ import { invoicePdf } from '../pdf.js';
 import { invoiceEmail, startRetentionWindow } from '../archive.js';
 import { receiveCustomerPayment, useCustomerCredit } from '../balance.js';
 import { rememberPrices } from '../customerPrices.js';
+import { returnMoney } from '../returnMoney.js';
 import {
   LOCKED_MESSAGE, seesAllInvoices, lockState, openWindow, closeAfterPrint, requestAccess, decideRequest, pendingRequests, hasOpenWindow,
 } from '../invoiceAccess.js';
@@ -356,15 +357,41 @@ r.patch('/:id/status', requirePerm('invoices', 'edit'), h(async (req, res) => {
     return fail(res, 403, 'Only administrators can mark an invoice as unpaid');
   }
 
+  if (status === 'unpaid') {
+    // "This money was not received" (wrong click, bounced check): the money counted on the invoice is
+    // taken back off it and reversed in the payment history, so the customer owes it again. Goods that
+    // came back stay returned: what a credit return took off the invoice is kept.
+    const pDate = isIsoDate(req.body?.paymentDate) ? req.body.paymentDate : new Date().toISOString().slice(0, 10);
+    const result = await tx(async (client) => {
+      const inv = (await client.query(`SELECT * FROM invoices WHERE id=$1 FOR UPDATE`, [req.params.id])).rows[0];
+      if (!inv) return { status: 404, message: 'Invoice not found' };
+      const total = Number(inv.total);
+      const paid = round2(Number(inv.paid_amount) || 0);
+      const kept = Math.min(paid, (await returnMoney(client, inv.id)).credited);
+      const reversed = round2(paid - kept);
+      if (!(reversed > 0)) {
+        return { status: 422, message: kept > 0 ? `No money has been paid on this invoice: ${kept.toFixed(2)} of it is covered by returns` : 'Nothing has been paid on this invoice' };
+      }
+      const newStatus = kept >= total && total > 0 ? 'paid' : kept > 0 ? 'partial' : 'unpaid';
+      await client.query(`UPDATE invoices SET status=$1, paid_amount=$2 WHERE id=$3`, [newStatus, kept, inv.id]);
+      await client.query(`UPDATE customer_sales_records SET status=$1, paid_amount=$2 WHERE invoice_id=$3`, [newStatus, kept, inv.id]);
+      const pSeq = (await client.query(`SELECT nextval('customer_payment_seq') AS n`)).rows[0].n;
+      await client.query(
+        `INSERT INTO customer_payments (payment_number, customer_id, customer_name, amount, payment_date, payment_method, reference, notes, created_by)
+         VALUES ($1, $2, $3, $4, $5, 'other', '', $6, $7)`,
+        [`PAY_${String(pSeq).padStart(6, '0')}`, inv.customer_id, inv.customer_name, -reversed, pDate,
+         `Invoice ${inv.invoice_number} marked unpaid: payment reversed`, req.user?.id || null],
+      );
+      return { reversed, kept, newStatus };
+    });
+    if (result.message) return fail(res, result.status, result.message);
+    const keptNote = result.kept > 0 ? ` ${result.kept.toFixed(2)} from returns stays off the invoice.` : '';
+    return ok(res, result, `Invoice marked unpaid: ${result.reversed.toFixed(2)} is owed again and reversed in the payment history.${keptNote}`);
+  }
+
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
   const inv = rows[0];
-
-  if (status === 'unpaid') {
-    await query(`UPDATE invoices SET status='unpaid', paid_amount=0 WHERE id=$1`, [inv.id]);
-    await query(`UPDATE customer_sales_records SET status='unpaid', paid_amount=0 WHERE invoice_id=$1`, [inv.id]);
-    return ok(res, null, 'Invoice marked unpaid');
-  }
 
   const total = Number(inv.total);
   const currentPaid = Number(inv.paid_amount) || 0;

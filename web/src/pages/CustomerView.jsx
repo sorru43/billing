@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
 import { ArrowLeft, CircleCheckBig, CreditCard, Undo2 } from 'lucide-react';
 import { api } from '../api.js';
+import { confirmUnpaidInvoice, localToday } from '../unpaid.js';
 import { useAuth, useMoney, formatDate } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
 import { UpdateBalanceModal } from './Customers.jsx';
@@ -43,9 +44,10 @@ export default function CustomerView() {
   useEffect(load, [load]);
 
   const setStatus = async (inv, status) => {
+    if (status === 'unpaid' && !confirmUnpaidInvoice(inv.invoiceNumber)) return;
     try {
-      await api.patch(`/invoices/${inv.id}/status`, { status });
-      toast.success(`Invoice ${inv.invoiceNumber} marked ${status}`);
+      const r = await api.patch(`/invoices/${inv.id}/status`, { status, paymentDate: localToday() });
+      toast.success(r.message || `Invoice ${inv.invoiceNumber} marked ${status}`, { autoClose: 6000 });
       load();
     } catch (e) {
       toast.error(e.message);
@@ -155,7 +157,7 @@ export default function CustomerView() {
                   <td className={td}>{formatDate(p.paymentDate)}</td>
                   <td className={`${td} capitalize`}>{p.paymentMethod.replace('_', ' ')}{p.reference ? <span className="block text-xs normal-case text-gray-400">{p.reference}</span> : null}</td>
                   <td className={`${td} text-gray-500`}>{p.notes || '-'}</td>
-                  <td className={`${td} text-right font-semibold text-emerald-700`}>{money(p.amount)}</td>
+                  <td className={`${td} text-right font-semibold ${Number(p.amount) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money(p.amount)}</td>
                 </tr>
               ))}
               {(!data.payments || !data.payments.length) && (

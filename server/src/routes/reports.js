@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { requirePerm } from '../auth.js';
-import { h, ok, fail, validate, isoDate, isIsoDate, BAD_DATE } from '../http.js';
+import { h, ok, fail, validate, isoDate, isIsoDate, isUuid, BAD_DATE } from '../http.js';
 import { getSetting } from '../settings.js';
 import { ALERT_SQL } from '../stock.js';
 import { reportPdf, toCsv, PRICE_LEVELS } from '../pdf.js';
 import { sendMail } from '../mailer.js';
+import { RETURN_SUMS } from '../returnMoney.js';
 
 // Reports are generated in memory, emailed as PDF + CSV, and discarded.
 // Nothing about a report (contents, file, or history) is stored.
@@ -31,6 +32,29 @@ const schema = z.object({
 });
 
 const n2 = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const r2 = (n) => Math.round(Number(n) * 100) / 100;
+
+// Sales records for a period, each with what its returns did (returnMoney.js). Returns count against
+// the invoice they were made on, whatever day the goods came back.
+//   returned: value of the goods that came back
+//   money:    what was really received and kept: the paid amount without the part that was a credit
+//             return (goods, not money), minus cash refunded
+async function salesRows(where, params, order) {
+  const { rows } = await query(
+    `SELECT csr.*, inv.id AS active_invoice_id, inv.price_level,
+            coalesce(rt.returned, 0) AS returned, coalesce(rt.credited, 0) AS credited, coalesce(rt.refunded, 0) AS refunded
+       FROM customer_sales_records csr
+       LEFT JOIN invoices inv ON inv.id = csr.invoice_id OR (csr.invoice_id IS NULL AND inv.invoice_number = csr.invoice_number)
+       LEFT JOIN (SELECT invoice_id, ${RETURN_SUMS} FROM returns WHERE invoice_id IS NOT NULL GROUP BY invoice_id) rt ON rt.invoice_id = csr.invoice_id
+       ${where}
+      ORDER BY ${order}`,
+    params,
+  );
+  return rows.map((r) => {
+    const paid = Number(r.paid_amount || 0);
+    return { ...r, returned: r2(r.returned), money: r2(paid - Math.min(paid, Number(r.credited)) - Number(r.refunded)) };
+  });
+}
 
 async function build(b, sym) {
   const money = (n) => `${sym}${n2(n)}`;
@@ -44,23 +68,20 @@ async function build(b, sym) {
     let where = 'WHERE true';
     if (b.from) { params.push(b.from); where += ` AND csr.invoice_date >= $${params.length}`; }
     if (b.until) { params.push(b.until); where += ` AND csr.invoice_date <= $${params.length}`; }
-    const { rows } = await query(
-      `SELECT csr.*, inv.id AS active_invoice_id, inv.price_level
-       FROM customer_sales_records csr
-       LEFT JOIN invoices inv ON inv.id = csr.invoice_id OR (csr.invoice_id IS NULL AND inv.invoice_number = csr.invoice_number)
-       ${where}
-       ORDER BY csr.invoice_date DESC, csr.invoice_number DESC`,
-      params,
-    );
+    const rows = await salesRows(where, params, 'csr.invoice_date DESC, csr.invoice_number DESC');
     const revenue = rows.reduce((a, i) => a + Number(i.total), 0);
-    const paid = rows.reduce((a, i) => a + Number(i.paid_amount || 0), 0);
+    const returned = rows.reduce((a, i) => a + i.returned, 0);
+    const paid = rows.reduce((a, i) => a + i.money, 0);
+    const owed = rows.reduce((a, i) => a + Math.max(0, Number(i.total) - Number(i.paid_amount || 0)), 0);
     return {
       subtitle: `Sales ${b.from || 'any date'} → ${b.until || 'today'} (includes permanent sales records even if invoice was purged)`,
       summary: [
         { label: 'Total Sales Count', value: rows.length },
         { label: 'Total Sale Value', value: money(revenue) },
+        { label: 'Returns', value: money(returned) },
+        { label: 'Net Sales', value: money(revenue - returned) },
         { label: 'Total Paid', value: money(paid) },
-        { label: 'Total Unpaid', value: money(revenue - paid) },
+        { label: 'Total Unpaid', value: money(owed) },
       ],
       columns: [
         { key: 'number', label: 'Invoice ID', width: 14 },
@@ -69,6 +90,7 @@ async function build(b, sym) {
         { key: 'level', label: 'Price Level', width: 14 },
         { key: 'items', label: 'Items', width: 7, align: 'right' },
         { key: 'total', label: 'Total Sale', width: 14, align: 'right' },
+        { key: 'returned', label: 'Returned', width: 12, align: 'right' },
         { key: 'paid', label: 'Paid', width: 12, align: 'right' },
         { key: 'status', label: 'Status', width: 9 },
       ],
@@ -79,7 +101,8 @@ async function build(b, sym) {
         level: i.price_level ? (PRICE_LEVELS[i.price_level] || i.price_level) : 'Standard',
         items: Array.isArray(i.items) ? i.items.reduce((a, it) => a + (it.quantity || 1), 0) : 0,
         total: money(i.total),
-        paid: money(i.paid_amount || 0),
+        returned: i.returned > 0 ? money(i.returned) : '',
+        paid: money(i.money),
         status: i.status,
       })),
     };
@@ -187,22 +210,19 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
     where += ` AND csr.invoice_date <= $${params.length}`;
   }
   if (req.query.customerId) {
+    if (!isUuid(req.query.customerId)) return fail(res, 422, 'Unknown customer'); // was a 500
     params.push(req.query.customerId);
     where += ` AND csr.customer_id = $${params.length}`;
   }
 
-  const { rows } = await query(
-    `SELECT csr.*, inv.id AS active_invoice_id, inv.price_level
-     FROM customer_sales_records csr
-     LEFT JOIN invoices inv ON inv.id = csr.invoice_id OR (csr.invoice_id IS NULL AND inv.invoice_number = csr.invoice_number)
-     ${where}
-     ORDER BY csr.invoice_date DESC, csr.created_at DESC`,
-    params,
-  );
+  const rows = await salesRows(where, params, 'csr.invoice_date DESC, csr.created_at DESC');
 
+  // Paid = money really received and kept (a credit return is goods, a refund went back out).
+  // Owed still comes from the invoice's own balance, which a credit return has already lowered.
   const totalSales = rows.reduce((acc, r) => acc + Number(r.total || 0), 0);
-  const totalPaid = rows.reduce((acc, r) => acc + Number(r.paid_amount || 0), 0);
-  const totalOwed = Math.max(0, Math.round((totalSales - totalPaid) * 100) / 100);
+  const totalReturned = r2(rows.reduce((acc, r) => acc + r.returned, 0));
+  const totalPaid = rows.reduce((acc, r) => acc + r.money, 0);
+  const totalOwed = r2(rows.reduce((acc, r) => acc + Math.max(0, Number(r.total) - Number(r.paid_amount || 0)), 0));
   const salesCount = rows.length;
   const paidCount = rows.filter((r) => r.status === 'paid').length;
   const partialCount = rows.filter((r) => r.status === 'partial').length;
@@ -220,7 +240,8 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
     customerName: r.customer_name,
     invoiceDate: typeof r.invoice_date === 'string' ? r.invoice_date.slice(0, 10) : new Date(r.invoice_date).toISOString().slice(0, 10),
     total: Number(r.total),
-    paidAmount: Number(r.paid_amount || 0),
+    returned: r.returned,
+    paidAmount: r.money,
     balance: Math.max(0, Math.round((Number(r.total) - Number(r.paid_amount || 0)) * 100) / 100),
     status: r.status,
     invoiceDeleted: Boolean(r.invoice_deleted || !r.active_invoice_id),
@@ -235,18 +256,18 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
   for (const s of sales) {
     let c = byCustomer.get(s.customerKey);
     if (!c) {
-      c = { key: s.customerKey, customerId: s.customerId, customerName: s.customerName, invoiceCount: 0, total: 0, paid: 0, owed: 0, lastDate: s.invoiceDate };
+      c = { key: s.customerKey, customerId: s.customerId, customerName: s.customerName, invoiceCount: 0, total: 0, returned: 0, paid: 0, owed: 0, lastDate: s.invoiceDate };
       byCustomer.set(s.customerKey, c);
     }
     c.invoiceCount += 1;
     c.total += s.total;
+    c.returned += s.returned;
     c.paid += s.paidAmount;
     c.owed += s.balance;
     if (s.invoiceDate > c.lastDate) c.lastDate = s.invoiceDate;
   }
-  const r2 = (n) => Math.round(n * 100) / 100;
   const customers = [...byCustomer.values()]
-    .map((c) => ({ ...c, total: r2(c.total), paid: r2(c.paid), owed: r2(c.owed) }))
+    .map((c) => ({ ...c, total: r2(c.total), returned: r2(c.returned), paid: r2(c.paid), owed: r2(c.owed) }))
     .sort((a, b) => b.total - a.total || a.customerName.localeCompare(b.customerName));
 
   ok(res, {
@@ -254,6 +275,8 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
     summary: {
       customerCount: customers.length,
       totalSales: Math.round(totalSales * 100) / 100,
+      totalReturned,
+      netSales: r2(totalSales - totalReturned),
       totalPaid: Math.round(totalPaid * 100) / 100,
       totalOwed,
       salesCount,

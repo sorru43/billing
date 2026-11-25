@@ -142,8 +142,8 @@ export default function Reports() {
       return;
     }
     const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-    const headers = ['Customer', 'Invoices', 'Last Purchase', 'Total Purchased', 'Paid', 'Owes Us'];
-    const rows = salesData.customers.map((c) => [q(c.customerName), c.invoiceCount, q(c.lastDate), c.total.toFixed(2), c.paid.toFixed(2), c.owed.toFixed(2)]);
+    const headers = ['Customer', 'Invoices', 'Last Purchase', 'Total Purchased', 'Returned', 'Paid', 'Owes Us'];
+    const rows = salesData.customers.map((c) => [q(c.customerName), c.invoiceCount, q(c.lastDate), c.total.toFixed(2), (c.returned || 0).toFixed(2), c.paid.toFixed(2), c.owed.toFixed(2)]);
     const link = document.createElement('a');
     link.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent([headers.join(','), ...rows.map((r) => r.join(','))].join('\n')));
     link.setAttribute('download', `sales-by-customer-${period}-${new Date().toISOString().slice(0, 10)}.csv`);
@@ -158,13 +158,14 @@ export default function Reports() {
       toast.info('No sales data to export in selected period.');
       return;
     }
-    const headers = ['Invoice Number', 'Date', 'Customer', 'Items', 'Total Sale', 'Paid Amount', 'Balance', 'Status', 'Invoice State'];
+    const headers = ['Invoice Number', 'Date', 'Customer', 'Items', 'Total Sale', 'Returned', 'Paid Amount', 'Balance', 'Status', 'Invoice State'];
     const rows = salesData.sales.map((s) => [
       `"${s.invoiceNumber}"`,
       `"${s.invoiceDate}"`,
       `"${s.customerName.replace(/"/g, '""')}"`,
       s.itemsCount,
       s.total.toFixed(2),
+      (s.returned || 0).toFixed(2),
       s.paidAmount.toFixed(2),
       s.balance.toFixed(2),
       `"${s.status}"`,
@@ -387,8 +388,13 @@ export default function Reports() {
             <div className="bg-gradient-to-br from-purple-900 to-indigo-900 text-white p-5 rounded-2xl shadow-md border border-purple-800 relative overflow-hidden">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-purple-200">Total Sale Value</p>
-                  <h3 className="text-3xl font-extrabold mt-1 tracking-tight text-white">{money(summary.totalSales)}</h3>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-purple-200">{summary.totalReturned > 0 ? 'Net Sales (after returns)' : 'Total Sale Value'}</p>
+                  <h3 className="text-3xl font-extrabold mt-1 tracking-tight text-white">{money(summary.netSales ?? summary.totalSales)}</h3>
+                  {summary.totalReturned > 0 && (
+                    <p className="text-xs text-purple-200 mt-1">
+                      Sold {money(summary.totalSales)} · returned {money(summary.totalReturned)}
+                    </p>
+                  )}
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-purple-200 backdrop-blur-xs">
                   <Wallet size={22} />
@@ -415,6 +421,7 @@ export default function Reports() {
               </div>
               <p className="text-xs text-gray-500 mt-3 font-medium">
                 {summary.paidCount} fully paid sale{summary.paidCount === 1 ? '' : 's'}
+                {summary.totalReturned > 0 && ' · money kept, after refunds'}
               </p>
             </div>
 
@@ -482,6 +489,7 @@ export default function Reports() {
                       <th className="py-3 px-4 text-center">Invoices</th>
                       <th className="py-3 px-4">Last Purchase</th>
                       <th className="py-3 px-4 text-right">Total Purchased</th>
+                      <th className="py-3 px-4 text-right">Returned</th>
                       <th className="py-3 px-4 text-right">Paid</th>
                       <th className="py-3 px-4 text-right">Owes Us</th>
                     </tr>
@@ -503,6 +511,7 @@ export default function Reports() {
                         <td className="py-3 px-4 text-center text-gray-700">{c.invoiceCount}</td>
                         <td className="py-3 px-4 text-xs text-gray-600 whitespace-nowrap">{c.lastDate}</td>
                         <td className="py-3 px-4 text-right font-bold text-gray-900">{money(c.total)}</td>
+                        <td className={`py-3 px-4 text-right ${c.returned > 0 ? 'text-amber-700 font-semibold' : 'text-gray-300'}`}>{c.returned > 0 ? money(c.returned) : '—'}</td>
                         <td className="py-3 px-4 text-right font-semibold text-emerald-600">{money(c.paid)}</td>
                         <td className={`py-3 px-4 text-right font-semibold ${c.owed > 0 ? 'text-rose-600' : 'text-gray-400'}`}>{money(c.owed)}</td>
                       </tr>
@@ -514,6 +523,7 @@ export default function Reports() {
                         Totals for Period:
                       </td>
                       <td className="py-3 px-4 text-right text-purple-700 text-sm">{money(summary.totalSales)}</td>
+                      <td className="py-3 px-4 text-right text-amber-700 text-sm">{money(summary.totalReturned || 0)}</td>
                       <td className="py-3 px-4 text-right text-emerald-600 text-sm">{money(summary.totalPaid)}</td>
                       <td className="py-3 px-4 text-right text-rose-600 text-sm">{money(summary.totalOwed)}</td>
                     </tr>
@@ -668,6 +678,11 @@ function CustomerInvoicesModal({ customer, invoices, period, money, onClose }) {
           <span>
             Purchased <b className="text-gray-950">{money(customer.total)}</b>
           </span>
+          {customer.returned > 0 && (
+            <span>
+              Returned <b className="text-amber-700">{money(customer.returned)}</b>
+            </span>
+          )}
           <span>
             Paid <b className="text-emerald-700">{money(customer.paid)}</b>
           </span>
@@ -688,6 +703,7 @@ function CustomerInvoicesModal({ customer, invoices, period, money, onClose }) {
                 <th className="py-2 px-3">Date</th>
                 <th className="py-2 px-3 text-center">Items</th>
                 <th className="py-2 px-3 text-right">Total</th>
+                <th className="py-2 px-3 text-right">Returned</th>
                 <th className="py-2 px-3 text-right">Paid</th>
                 <th className="py-2 px-3 text-right">Owed</th>
                 <th className="py-2 px-3 text-center">Status</th>
@@ -710,6 +726,7 @@ function CustomerInvoicesModal({ customer, invoices, period, money, onClose }) {
                   <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{s.invoiceDate}</td>
                   <td className="py-2 px-3 text-center text-xs text-gray-600">{s.itemsCount}</td>
                   <td className="py-2 px-3 text-right font-semibold text-gray-900">{money(s.total)}</td>
+                  <td className={`py-2 px-3 text-right ${s.returned > 0 ? 'text-amber-700' : 'text-gray-300'}`}>{s.returned > 0 ? money(s.returned) : '—'}</td>
                   <td className="py-2 px-3 text-right text-emerald-600">{money(s.paidAmount)}</td>
                   <td className={`py-2 px-3 text-right ${s.balance > 0 ? 'text-rose-600 font-semibold' : 'text-gray-400'}`}>{money(s.balance)}</td>
                   <td className="py-2 px-3 text-center">

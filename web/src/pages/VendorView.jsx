@@ -143,7 +143,7 @@ export default function VendorView() {
                   <td className={`${td} capitalize`}>{String(p.payment_method || '').replace('_', ' ')}</td>
                   <td className={td}>{p.reference || '-'}</td>
                   <td className={td}>{p.notes || '-'}</td>
-                  <td className={`${td} text-right font-semibold text-emerald-700`}>{money(p.amount)}</td>
+                  <td className={`${td} text-right font-semibold ${Number(p.amount) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money(p.amount)}</td>
                 </tr>
               ))}
               {!data.payments.length && <tr><td colSpan={6} className="text-center text-sm text-gray-500 py-6">No payments yet.</td></tr>}

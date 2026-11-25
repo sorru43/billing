@@ -60,11 +60,13 @@ export function useMoney() {
   return useCallback(
     (n, decimals = 2) => {
       const num = Number(n || 0);
-      const formatted = num.toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-US', {
+      const formatted = Math.abs(num).toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-US', {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals,
       });
-      return lang === 'fr' ? `${formatted} €` : `$${formatted}`;
+      // A reversed payment is negative: show -$70.00, not $-70.00.
+      const sign = num < 0 ? '-' : '';
+      return lang === 'fr' ? `${sign}${formatted} €` : `${sign}$${formatted}`;
     },
     [lang],
   );

@@ -38,8 +38,21 @@ export default function ReturnView() {
             </p>
           </div>
           <div className="text-right">
-            <p className="text-sm text-gray-600">{x.settlement === 'credit' ? 'Credited to account' : 'Refunded'}</p>
+            {/* "Refunded" only when all of it went back as cash; a part-paid invoice gets a split (below). */}
+            <p className="text-sm text-gray-600">
+              {x.settlement === 'credit' ? 'Credited to account' : x.refundAmount != null && Number(x.refundAmount) < Number(x.total) ? 'Returned' : 'Refunded'}
+            </p>
             <p className="text-2xl font-bold text-gray-950">{money(x.total)}</p>
+            {/* Where the value went (returns saved before this was recorded have no breakdown). */}
+            {x.refundAmount != null && (
+              <div className="text-xs text-gray-600 mt-1 space-y-0.5">
+                {Number(x.refundAmount) > 0 && <p>Cash handed back: <b>{money(x.refundAmount)}</b></p>}
+                {Number(x.appliedAmount) > 0 && <p>Taken off invoice {x.invoiceNumber}: <b>{money(x.appliedAmount)}</b></p>}
+                {Number(x.total) - Number(x.refundAmount) - Number(x.appliedAmount) > 0.004 && (
+                  <p>To the customer&apos;s account: <b>{money(Number(x.total) - Number(x.refundAmount) - Number(x.appliedAmount))}</b></p>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <table className="w-full">

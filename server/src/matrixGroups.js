@@ -152,7 +152,8 @@ const pushValue = (list, v) => {
 /**
  * Saves grouped rows as matrix items inside the caller's transaction.
  * Row items need: row, name, nameKey, barcode, barcodeKey, cost, sellingPrice, topCustomerPrice, jobberPrice,
- * quantity, description, status.
+ * quantity, description, status; and optionally `given` ({ cost, sellingPrice, topCustomerPrice, jobberPrice, quantity,
+ * status }: which of those the file really has). Without `given`, all of them count as given.
  *   mode 'skip':   an existing variant is left alone; a flat product with the row's name or barcode is
  *                  moved into the matrix item (renamed, grouped) without touching its prices or stock.
  *   mode 'update': both also get the row's prices, stock, barcode and status.
@@ -192,6 +193,12 @@ export async function saveMatrixGroups(db, groups, { mode, canMove = true, matri
       const owner = item.barcodeKey ? byBarcode.get(item.barcodeKey) : null;
       const variant = variantByKey.get(pairKey(option1, option2));
       const values = [item.cost, item.sellingPrice, item.topCustomerPrice, item.jobberPrice, item.quantity, item.barcode || null, item.status];
+      // For a product that already exists: only what the file really gives (item.given, set by the
+      // import). A missing column or blank cell is null here and keeps the current value.
+      const g = item.given;
+      const keep = (has, v) => (!g || has ? v : null);
+      const changes = [keep(g?.cost, item.cost), keep(g?.sellingPrice, item.sellingPrice), keep(g?.topCustomerPrice, item.topCustomerPrice),
+        keep(g?.jobberPrice, item.jobberPrice), keep(g?.quantity, item.quantity), item.barcode || null, keep(g?.status, item.status)];
 
       if (variant) {
         if (owner && owner.id !== variant.id) {
@@ -203,9 +210,11 @@ export async function saveMatrixGroups(db, groups, { mode, canMove = true, matri
           continue;
         }
         await db.query(
-          `UPDATE products SET cost=$1, selling_price=$2, top_customer_price=$3, jobber_price=$4, quantity=$5,
-                  barcode=COALESCE(NULLIF($6, ''), barcode), status=$7, updated_at=now() WHERE id=$8`,
-          [...values, variant.id],
+          `UPDATE products SET cost=COALESCE($1, cost), selling_price=COALESCE($2, selling_price),
+                  top_customer_price=COALESCE($3, top_customer_price), jobber_price=COALESCE($4, jobber_price),
+                  quantity=COALESCE($5, quantity), barcode=COALESCE(NULLIF($6, ''), barcode), status=COALESCE($7, status),
+                  updated_at=now() WHERE id=$8`,
+          [...changes, variant.id],
         );
         if (item.barcodeKey) byBarcode.set(item.barcodeKey, { id: variant.id, name: variantName(m.name, option1, option2), matrix_id: m.id });
         out.updated++;
@@ -251,10 +260,11 @@ export async function saveMatrixGroups(db, groups, { mode, canMove = true, matri
         await db.query(
           `UPDATE products SET matrix_id=$1, option1=$2, option2=$3, name=$4, category_id=$5, brand_id=$6,
                   description=COALESCE(NULLIF($7, ''), description),
-                  ${update ? `cost=$9, selling_price=$10, top_customer_price=$11, jobber_price=$12, quantity=$13,
-                  barcode=COALESCE(NULLIF($14, ''), barcode), status=$15,` : ''} updated_at=now()
+                  ${update ? `cost=COALESCE($9, cost), selling_price=COALESCE($10, selling_price),
+                  top_customer_price=COALESCE($11, top_customer_price), jobber_price=COALESCE($12, jobber_price),
+                  quantity=COALESCE($13, quantity), barcode=COALESCE(NULLIF($14, ''), barcode), status=COALESCE($15, status),` : ''} updated_at=now()
             WHERE id=$8`,
-          [m.id, option1, option2, name, m.category_id, m.brand_id, m.description, flat.id, ...(update ? values : [])],
+          [m.id, option1, option2, name, m.category_id, m.brand_id, m.description, flat.id, ...(update ? changes : [])],
         );
         id = flat.id;
         byName.delete(lc(flat.name));

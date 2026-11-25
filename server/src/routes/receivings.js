@@ -134,6 +134,17 @@ r.post('/', requirePerm('receiving', 'create'), h(async (req, res) => {
     if (po) {
       await client.query(`UPDATE purchase_orders SET status='received', receiving_id=$1, updated_at=now() WHERE id=$2`, [rows[0].id, po.id]);
     }
+    // Saved as "Paid": the payment goes in the vendor's payment history too (it used to be missing
+    // there, so the history and "Mark Unpaid" had nothing to show or reverse).
+    if (b.status === 'paid' && round2(total) > 0) {
+      const seq = (await client.query(`SELECT nextval('vendor_payment_seq') AS n`)).rows[0].n;
+      await client.query(
+        `INSERT INTO vendor_payments (payment_number, vendor_id, vendor_name, amount, payment_date, payment_method, reference, notes, receiving_id, created_by)
+         VALUES ($1, $2, $3, $4, $5, 'other', '', $6, $7, $8)`,
+        [`VPAY_${String(seq).padStart(6, '0')}`, vendorId, b.vendorName, round2(total), b.receivedDate,
+         `Receiving ${rows[0].receiving_number}: saved as paid`, rows[0].id, req.user.id],
+      );
+    }
     // Credit from an earlier vendor overpayment pays this receiving first.
     if (vendorId && b.status !== 'paid' && (await useVendorCredit(client, vendorId, rows[0].id)) > 0) {
       return { receiving: (await client.query(`SELECT * FROM receivings WHERE id=$1`, [rows[0].id])).rows[0] };
@@ -149,14 +160,32 @@ r.patch('/:id/status', requirePerm('receiving', 'edit'), h(async (req, res) => {
   const status = req.body?.status;
   if (!['paid', 'unpaid', 'partial'].includes(status)) return fail(res, 422, 'Invalid status');
 
+  if (status === 'unpaid') {
+    // "This was not paid after all": what was counted as paid is owed again, and the payment is
+    // reversed in the vendor's payment history (it used to stay there as if paid).
+    const when = isIsoDate(req.body?.paymentDate) ? req.body.paymentDate : new Date().toISOString().slice(0, 10);
+    const result = await tx(async (client) => {
+      const rcv = (await client.query(`SELECT * FROM receivings WHERE id=$1 FOR UPDATE`, [req.params.id])).rows[0];
+      if (!rcv) return { status: 404, message: 'Receiving not found' };
+      const paid = round2(Number(rcv.paid_amount) || 0);
+      if (!(paid > 0)) return { status: 422, message: 'Nothing has been paid on this receiving' };
+      await client.query(`UPDATE receivings SET status='unpaid', paid_amount=0 WHERE id=$1`, [rcv.id]);
+      const seq = (await client.query(`SELECT nextval('vendor_payment_seq') AS n`)).rows[0].n;
+      await client.query(
+        `INSERT INTO vendor_payments (payment_number, vendor_id, vendor_name, amount, payment_date, payment_method, reference, notes, receiving_id, created_by)
+         VALUES ($1, $2, $3, $4, $5, 'other', '', $6, $7, $8)`,
+        [`VPAY_${String(seq).padStart(6, '0')}`, rcv.vendor_id, rcv.vendor_name, -paid, when,
+         `Receiving ${rcv.receiving_number} marked unpaid: payment reversed`, rcv.id, req.user?.id || null],
+      );
+      return { reversed: paid };
+    });
+    if (result.message) return fail(res, result.status, result.message);
+    return ok(res, result, `Vendor invoice marked unpaid: ${result.reversed.toFixed(2)} is owed again and reversed in the payment history`);
+  }
+
   const { rows } = await query(`SELECT * FROM receivings WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Receiving not found');
   const rcv = rows[0];
-
-  if (status === 'unpaid') {
-    await query(`UPDATE receivings SET status='unpaid', paid_amount=0 WHERE id=$1`, [rcv.id]);
-    return ok(res, null, 'Vendor invoice marked unpaid');
-  }
 
   const total = Number(rcv.total);
   const currentPaid = Number(rcv.paid_amount || 0);

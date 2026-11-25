@@ -86,7 +86,22 @@ r.put('/:id', requirePerm('receiving', 'edit'), h(async (req, res) => {
 
 r.delete('/:id', requirePerm('receiving', 'delete'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Vendor not found');
-  // Receivings keep the vendor's name, so deleting the vendor never loses purchase history.
+  // Receivings keep the vendor's name, so deleting the vendor never loses purchase history. But it
+  // unlinks them, so a vendor we still owe (or who holds our credit) would lose that balance: those
+  // are refused, like customers. Turning the vendor off keeps it.
+  const open = (await query(
+    `SELECT v.credit_balance,
+            (SELECT count(*)::int FROM receivings x WHERE x.vendor_id = v.id AND x.status <> 'paid') AS n,
+            (SELECT coalesce(sum(GREATEST(0, x.total - coalesce(x.paid_amount, 0))), 0) FROM receivings x WHERE x.vendor_id = v.id AND x.status <> 'paid') AS owed
+       FROM vendors v WHERE v.id = $1`,
+    [req.params.id],
+  )).rows[0];
+  if (open && (open.n > 0 || Number(open.credit_balance) > 0)) {
+    const parts = [];
+    if (open.n > 0) parts.push(`is still owed ${Number(open.owed).toFixed(2)} on ${open.n} receiving${open.n === 1 ? '' : 's'}`);
+    if (Number(open.credit_balance) > 0) parts.push(`holds ${Number(open.credit_balance).toFixed(2)} of our credit`);
+    return fail(res, 409, `This vendor ${parts.join(' and ')}. Settle that first, or turn the vendor off instead of deleting.`);
+  }
   const { rowCount } = await query(`DELETE FROM vendors WHERE id=$1`, [req.params.id]);
   if (!rowCount) return fail(res, 404, 'Vendor not found');
   ok(res, null, 'Vendor deleted');

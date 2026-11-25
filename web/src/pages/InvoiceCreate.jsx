@@ -196,7 +196,9 @@ function CustomerPicker({ onPick }) {
   );
 }
 
-export function InvoicePaymentSection({ total, payment, setPayment, money }) {
+// customerId: the saved customer picked for this invoice, if any. Money above the total is then kept
+// on their account (older bills, then credit) instead of being change, and the footer says so.
+export function InvoicePaymentSection({ total, payment, setPayment, money, customerId }) {
   const { t } = useI18n();
   const cashVal = Number(payment.cash) || 0;
   const checkVal = Number(payment.check) || Number(payment.cheque) || 0;
@@ -395,9 +397,14 @@ export function InvoicePaymentSection({ total, payment, setPayment, money }) {
         </div>
         {totalPaid > total && (
           <div className="flex justify-between text-xs">
-            <span className="text-gray-600">{t('inv.change', 'Change')}:</span>
+            <span className="text-gray-600">{customerId ? t('inv.extra_kept', 'Extra (kept on their account)') : t('inv.change', 'Change')}:</span>
             <span className="font-bold text-purple-700">{money(round2(totalPaid - total))}</span>
           </div>
+        )}
+        {totalPaid > total && customerId && (
+          <p className="text-[11px] text-purple-800 bg-purple-50 border border-purple-200 rounded p-1.5">
+            {t('inv.extra_kept_note', "Not change: it pays this customer's older unpaid invoices first, and the rest stays as credit for their next invoice.")}
+          </p>
         )}
         <div className="flex justify-between items-center pt-1.5 border-t border-gray-200">
           <span className="text-gray-500 font-medium">{t('inv.status', 'Payment Status')}:</span>
@@ -929,11 +936,12 @@ export default function InvoiceCreate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [custPrices]);
 
-  // Changing the price level re-prices every line (the customer's own prices still win).
+  // Changing the price level re-prices the lines (the customer's own prices still win), except a
+  // price typed by hand on this screen: picking a customer with another level must not wipe it.
   const changeLevel = (value) => {
     const field = LEVELS.find((l) => l.value === value).field;
     setForm((f) => ({ ...f, priceLevel: value }));
-    setRows((rs) => rs.map((r) => (r.product ? { ...r, ...priceOf(r.product, r.matrixId, field) } : r)));
+    setRows((rs) => rs.map((r) => (r.product && r.source !== 'manual' ? { ...r, ...priceOf(r.product, r.matrixId, field) } : r)));
   };
 
   const pickCustomer = (c) => {
@@ -1451,6 +1459,7 @@ export default function InvoiceCreate() {
                   payment={payment}
                   setPayment={setPayment}
                   money={money}
+                  customerId={form.customerId}
                 />
               )}
             </div>

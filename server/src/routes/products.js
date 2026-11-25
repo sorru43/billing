@@ -25,8 +25,10 @@ const schema = z.object({
   selling_price: price('Selling price'),
   top_customer_price: price('Top customer price'),
   jobber_price: price('Jobber price'),
-  // may be below zero when out-of-stock selling is on (sold before the stock was received)
-  quantity: z.coerce.number().int('Quantity must be a whole number').min(-1e9).max(1e9),
+  // may be below zero when out-of-stock selling is on (sold before the stock was received).
+  // Left out on an edit = keep the stock as it is now (the form only sends it when it was changed,
+  // so saving a price change can't undo sales made while the form was open). New product: 0.
+  quantity: z.coerce.number().int('Quantity must be a whole number').min(-1e9).max(1e9).optional(),
   barcode: z.string().trim().max(64).regex(/^[A-Za-z0-9\-_.]*$/, 'Barcode may only contain letters, numbers, - _ .').default(''),
   description: z.string().max(5000).default(''),
   category_id: z.string().uuid('Category is required'),
@@ -376,6 +378,13 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
 
     const barcodeKey = barcode ? barcode.toLowerCase() : null;
     const nameKey = name.toLowerCase();
+    // Which of these the file really gives for this row. "Update existing" changes only those:
+    // a missing column or a blank cell keeps the product's current value (it used to become 0).
+    const filled = (f) => raw[f] !== undefined && raw[f] !== '';
+    const given = {
+      cost: filled('cost'), sellingPrice: filled('sellingPrice'), topCustomerPrice: filled('topCustomerPrice'),
+      jobberPrice: filled('jobberPrice'), quantity: filled('quantity'), status: filled('status'),
+    };
 
     if (barcodeKey && seenBarcodes.has(barcodeKey)) {
       errors.push({ row: line, name, message: `Same barcode as row ${seenBarcodes.get(barcodeKey)}` });
@@ -404,6 +413,7 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
       categoryName,
       brandName,
       status,
+      given,
     });
   });
 
@@ -523,31 +533,32 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
         await client.query(
           // A matrix variant keeps its "Item - Flavor" name, category, brand and description (they
           // come from its matrix item); the file still updates its prices, stock, barcode and status.
+          // Only what the file gives: a missing column or blank cell (null here) keeps the current value.
           `UPDATE products SET
              name = CASE WHEN matrix_id IS NULL THEN $1 ELSE name END,
-             cost = $2,
-             selling_price = $3,
-             top_customer_price = $4,
-             jobber_price = $5,
-             quantity = $6,
+             cost = COALESCE($2, cost),
+             selling_price = COALESCE($3, selling_price),
+             top_customer_price = COALESCE($4, top_customer_price),
+             jobber_price = COALESCE($5, jobber_price),
+             quantity = COALESCE($6, quantity),
              barcode = COALESCE(NULLIF($7, ''), barcode),
              description = CASE WHEN matrix_id IS NULL THEN COALESCE(NULLIF($8, ''), description) ELSE description END,
              category_id = CASE WHEN matrix_id IS NULL THEN COALESCE($9, category_id) ELSE category_id END,
-             status = $10,
+             status = COALESCE($10, status),
              brand_id = CASE WHEN matrix_id IS NULL THEN COALESCE($12, brand_id) ELSE brand_id END,
              updated_at = now()
            WHERE id = $11`,
           [
             item.name,
-            item.cost,
-            item.sellingPrice,
-            item.topCustomerPrice,
-            item.jobberPrice,
-            item.quantity,
+            item.given.cost ? item.cost : null,
+            item.given.sellingPrice ? item.sellingPrice : null,
+            item.given.topCustomerPrice ? item.topCustomerPrice : null,
+            item.given.jobberPrice ? item.jobberPrice : null,
+            item.given.quantity ? item.quantity : null,
             item.barcode || null,
             item.description,
             categoryId,
-            item.status,
+            item.given.status ? item.status : null,
             match.id,
             brandId,
           ]
@@ -621,7 +632,7 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('products'
     errors: errors.slice(0, 200),
     columns,
     ignoredColumns: ignored,
-    preview: valid.slice(0, 5).map(({ row, barcodeKey, nameKey, ...p }) => ({
+    preview: valid.slice(0, 5).map(({ row, barcodeKey, nameKey, given, ...p }) => ({
       ...p,
       category: p.categoryName || 'General',
       brand: p.brandName || '',
@@ -708,7 +719,7 @@ r.post('/', requirePerm('products', 'create'), h(async (req, res) => {
     const { rows } = await query(
       `INSERT INTO products (name,cost,selling_price,top_customer_price,jobber_price,quantity,barcode,description,category_id,status,low_stock_alert,brand_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-      [b.name, b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.quantity, b.barcode || null, b.description, b.category_id, b.status, b.low_stock_alert, b.brand_id],
+      [b.name, b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.quantity ?? 0, b.barcode || null, b.description, b.category_id, b.status, b.low_stock_alert, b.brand_id],
     );
     ok(res, { id: rows[0].id }, 'Product created', 201);
   } catch (e) {
@@ -726,9 +737,9 @@ r.put('/:id', requirePerm('products', 'edit'), h(async (req, res) => {
   if (owner?.matrix_id) return fail(res, 422, 'This is a matrix variant — edit it from its matrix item');
   try {
     const { rowCount } = await query(
-      `UPDATE products SET name=$1,cost=$2,selling_price=$3,top_customer_price=$4,jobber_price=$5,quantity=$6,barcode=$7,
+      `UPDATE products SET name=$1,cost=$2,selling_price=$3,top_customer_price=$4,jobber_price=$5,quantity=COALESCE($6, quantity),barcode=$7,
               description=$8,category_id=$9,status=$10,low_stock_alert=$11,brand_id=$12,updated_at=now() WHERE id=$13`,
-      [b.name, b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.quantity, b.barcode || null, b.description, b.category_id, b.status, b.low_stock_alert, b.brand_id, req.params.id],
+      [b.name, b.cost, b.selling_price, b.top_customer_price, b.jobber_price, b.quantity ?? null, b.barcode || null, b.description, b.category_id, b.status, b.low_stock_alert, b.brand_id, req.params.id],
     );
     if (!rowCount) return fail(res, 404, 'Product not found');
     ok(res, null, 'Product updated');

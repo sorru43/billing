@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
 import { Loader2, Search, Sparkles } from 'lucide-react';
@@ -32,6 +32,8 @@ export default function ProductForm() {
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupImage, setLookupImage] = useState('');
   const [lookupSource, setLookupSource] = useState('');
+  // Stock as it was when the form opened: it is only sent back if it was changed here.
+  const loadedQty = useRef(null);
 
   useEffect(() => {
     api.get('/categories/options').then((r) => setCategories(r.data)).catch(() => {});
@@ -42,6 +44,7 @@ export default function ProductForm() {
         .then(({ data }) => {
           // Variants are edited on their matrix item (name and options belong to it).
           if (data.matrix) return navigate(`/admin/matrix/edit/${data.matrix.id}`, { replace: true });
+          loadedQty.current = Number(data.quantity);
           setForm({
             ...EMPTY,
             ...Object.fromEntries(Object.keys(EMPTY).map((k) => [k, data[k] ?? EMPTY[k]])),
@@ -98,7 +101,9 @@ export default function ProductForm() {
     setErrors({});
     setSaving(true);
     try {
-      if (id) await api.put(`/products/${id}`, form);
+      // An untouched stock number is left out: sending it back would undo sales made since the form opened.
+      const { quantity, ...rest } = form;
+      if (id) await api.put(`/products/${id}`, Number(quantity) === loadedQty.current ? rest : form);
       else await api.post('/products', form);
       toast.success(id ? 'Product updated successfully' : 'Product created successfully');
       navigate('/admin/products');

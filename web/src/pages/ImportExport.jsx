@@ -695,7 +695,7 @@ export default function ImportExport() {
                       }}
                     />
                     <span>
-                      <b>Update existing</b>: Overwrite customer fields with spreadsheet values
+                      <b>Update existing</b>: Overwrite customer fields with spreadsheet values (blank cells keep current value)
                     </span>
                   </label>
                 </fieldset>

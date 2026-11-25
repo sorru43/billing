@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
 import { ArrowLeft, Download, KeyRound, Lock, Mail, Pencil, Printer, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
+import { confirmUnpaidInvoice, localToday } from '../unpaid.js';
 import { useAuth, useMoney, formatDate, Logo } from '../auth.jsx';
 import { Loader, StatusBadge } from '../components/ui.jsx';
 import EmailInvoiceModal from './EmailInvoiceModal.jsx';
@@ -76,9 +77,10 @@ export default function InvoiceView() {
   useEffect(load, [load]);
 
   const setStatus = async (status) => {
+    if (status === 'unpaid' && !confirmUnpaidInvoice(inv.invoiceNumber)) return;
     try {
-      await api.patch(`/invoices/${id}/status`, { status });
-      toast.success(`Invoice marked ${status}`);
+      const r = await api.patch(`/invoices/${id}/status`, { status, paymentDate: localToday() });
+      toast.success(r.message || `Invoice marked ${status}`, { autoClose: 6000 });
       load();
     } catch (e) {
       toast.error(e.message);

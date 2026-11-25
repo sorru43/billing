@@ -411,6 +411,13 @@ UPDATE customer_prices cp SET cost_basis = coalesce(
     (SELECT m.cost FROM product_matrices m WHERE m.id = cp.matrix_id),
     0)
  WHERE cp.cost_basis IS NULL;
+
+-- Returns: what each one did with its value, so "Mark Unpaid", refunds and the sales report can tell
+-- goods that came back from money. applied_amount = the part taken off the return's own invoice;
+-- refund_amount = cash handed back. Both are NULL on returns saved before 2026-11-25 (returnMoney.js
+-- then counts a refund as all cash and an applied credit as all taken off the invoice).
+ALTER TABLE returns ADD COLUMN IF NOT EXISTS applied_amount numeric(14,2);
+ALTER TABLE returns ADD COLUMN IF NOT EXISTS refund_amount numeric(14,2);
 `;
 
 // Keep every document-number sequence ahead of the numbers already used. Rows added without the

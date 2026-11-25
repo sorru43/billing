@@ -26,8 +26,9 @@ const variantSchema = z.object({
   option1: optValue,
   option2: z.string().trim().max(60).default(''),
   barcode: z.string().trim().max(64).regex(/^[A-Za-z0-9\-_.]*$/, 'Barcode may only contain letters, numbers, - _ .').default(''),
-  // may be below zero when out-of-stock selling is on (sold before the stock was received)
-  quantity: z.coerce.number().int('Quantity must be a whole number').min(-1e9).max(1e9),
+  // may be below zero when out-of-stock selling is on (sold before the stock was received).
+  // Left out on an existing variant = keep its stock as it is now (see products.js); new variant: 0.
+  quantity: z.coerce.number().int('Quantity must be a whole number').min(-1e9).max(1e9).optional(),
   cost: price('Cost'),
   selling_price: price('Selling price'),
   top_customer_price: price('Top customer price'),
@@ -214,11 +215,11 @@ async function save(client, b, id, isAdmin) {
   await client.query(`UPDATE products SET barcode = NULL, option1 = id::text, option2 = '' WHERE matrix_id = $1`, [matrixId]);
 
   for (const v of b.variants) {
-    const params = [variantName(b.name, v.option1, v.option2), v.cost, v.selling_price, v.top_customer_price, v.jobber_price, v.quantity,
+    const params = [variantName(b.name, v.option1, v.option2), v.cost, v.selling_price, v.top_customer_price, v.jobber_price, v.quantity ?? (v.id ? null : 0),
       v.barcode || null, b.description, b.category_id, v.status, matrixId, v.option1, v.option2, b.brand_id, v.low_stock_alert];
     if (v.id) {
       await client.query(
-        `UPDATE products SET name=$1, cost=$2, selling_price=$3, top_customer_price=$4, jobber_price=$5, quantity=$6, barcode=$7,
+        `UPDATE products SET name=$1, cost=$2, selling_price=$3, top_customer_price=$4, jobber_price=$5, quantity=COALESCE($6, quantity), barcode=$7,
                 description=$8, category_id=$9, status=$10, matrix_id=$11, option1=$12, option2=$13, brand_id=$14, low_stock_alert=$15,
                 updated_at=now() WHERE id=$16`,
         [...params, v.id],

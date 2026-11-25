@@ -99,6 +99,8 @@ export const translations = {
     'inv.customer_price': 'Customer price',
     'inv.remember_price': 'Keep as their price',
     'inv.cost_up': 'cost up',
+    'inv.extra_kept': 'Extra (kept on their account)',
+    'inv.extra_kept_note': "Not change: it pays this customer's older unpaid invoices first, and the rest stays as credit for their next invoice.",
     'inv.extra_info': 'Extra Information',
 
     // Customers
@@ -321,6 +323,8 @@ export const translations = {
     'inv.customer_price': 'Prix du client',
     'inv.remember_price': 'Garder comme son prix',
     'inv.cost_up': 'coût en hausse de',
+    'inv.extra_kept': 'Excédent (gardé sur son compte)',
+    'inv.extra_kept_note': "Ce n'est pas de la monnaie à rendre : il paie d'abord les anciennes factures impayées de ce client, et le reste est gardé en crédit pour sa prochaine facture.",
     'inv.extra_info': 'Informations complémentaires',
 
     // Customers

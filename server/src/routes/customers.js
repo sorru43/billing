@@ -431,7 +431,9 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('customers
       return;
     }
     seenEmails.set(key, line);
-    valid.push({ ...c, key, row: line });
+    // Price level and status change on an update only when the file really gives them: a missing
+    // column or blank cell keeps the customer's current one (it used to reset them to Selling / active).
+    valid.push({ ...c, key, row: line, hasLevel: Boolean(raw.priceLevel), hasStatus: Boolean(raw.status) });
   });
 
   const summary = await tx(async (client) => {
@@ -459,9 +461,9 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('customers
         // Blank cells keep the current value, so a partial sheet never wipes data.
         await client.query(
           `UPDATE customers SET name=$1, company=COALESCE(NULLIF($2,''),company), phone=COALESCE(NULLIF($3,''),phone),
-                  address=COALESCE(NULLIF($4,''),address), tax_number=COALESCE(NULLIF($5,''),tax_number), price_level=$6,
-                  notes=COALESCE(NULLIF($7,''),notes), status=$8, updated_at=now() WHERE id=$9`,
-          [c.name, c.company, c.phone, c.address, c.taxNumber, c.priceLevel, c.notes, c.status, id],
+                  address=COALESCE(NULLIF($4,''),address), tax_number=COALESCE(NULLIF($5,''),tax_number), price_level=COALESCE($6, price_level),
+                  notes=COALESCE(NULLIF($7,''),notes), status=COALESCE($8, status), updated_at=now() WHERE id=$9`,
+          [c.name, c.company, c.phone, c.address, c.taxNumber, c.hasLevel ? c.priceLevel : null, c.notes, c.hasStatus ? c.status : null, id],
         );
       } else {
         created++;
@@ -481,7 +483,7 @@ r.post('/import', requirePerm('import_export', 'create'), requirePerm('customers
   const result = {
     dryRun, mode, totalRows: body.length, ...summary, failed: errors.length,
     errors: errors.slice(0, 200), columns, ignoredColumns: ignored,
-    preview: valid.slice(0, 5).map(({ row, key, ...c }) => c),
+    preview: valid.slice(0, 5).map(({ row, key, hasLevel, hasStatus, ...c }) => c),
   };
   const msg = dryRun
     ? 'Preview ready'

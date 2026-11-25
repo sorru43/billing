@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
 import { X } from 'lucide-react';
@@ -85,6 +85,8 @@ export default function MatrixForm() {
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(null);
+  // Each variant's stock when the form opened: it is only sent back if it was changed here.
+  const loadedQty = useRef(new Map());
 
   useEffect(() => {
     api.get('/categories/options').then((r) => setCategories(r.data)).catch(() => {});
@@ -94,6 +96,7 @@ export default function MatrixForm() {
       .get(`/matrices/${id}`)
       .then(({ data }) => {
         setForm({ ...EMPTY, ...Object.fromEntries(Object.keys(EMPTY).map((k) => [k, data[k] ?? EMPTY[k]])), category_id: data.category_id || '', brand_id: data.brand_id || '' });
+        loadedQty.current = new Map(data.variants.map((v) => [v.id, Number(v.quantity)]));
         setVariants(Object.fromEntries(data.variants.map((v) => [keyOf(v.option1, v.option2), { ...v, low_stock_alert: v.low_stock_alert ?? '', include: true }])));
       })
       .catch((e) => toast.error(e.message))
@@ -150,7 +153,12 @@ export default function MatrixForm() {
       ...form,
       attr2_name: two ? form.attr2_name : '',
       attr2_values: two ? form.attr2_values : [],
-      variants: included.map(({ include, name, description, ...v }) => ({ ...v, option2: two ? v.option2 : '' })),
+      variants: included.map(({ include, name, description, ...v }) => {
+        const out = { ...v, option2: two ? v.option2 : '' };
+        // An untouched stock number is left out: sending it back would undo sales made since the form opened.
+        if (v.id && Number(v.quantity) === loadedQty.current.get(v.id)) delete out.quantity;
+        return out;
+      }),
     };
     try {
       if (id) await api.put(`/matrices/${id}`, body);

@@ -48,6 +48,13 @@ export default function ReturnCreate() {
   const total = round2(chosen.reduce((a, l) => a + Number(qty[l.productId]) * l.price, 0));
   const walkIn = inv && !inv.customerId;
   const creditTooBig = walkIn && settlement === 'credit' && total > (inv?.due || 0);
+  // A refund hands back only money that was really paid on this invoice (and not refunded yet);
+  // the rest of the return was never paid for, so it comes off what the invoice still owes.
+  const refundable = Number(inv?.refundable) || 0;
+  const refunding = settlement === 'refund';
+  let cashBack = refunding ? Math.min(total, refundable) : 0;
+  if (refunding && walkIn && round2(total - cashBack) > (inv?.due || 0)) cashBack = round2(total - (inv?.due || 0));
+  const offBill = refunding ? round2(total - cashBack) : 0;
 
   const save = async () => {
     if (!chosen.length) return setErrors({ items: 'Enter a quantity for at least one item' });
@@ -152,6 +159,13 @@ export default function ReturnCreate() {
                 <input type="radio" checked={settlement === 'refund'} onChange={() => setSettlement('refund')} />
                 Refund now (cash / Zelle / check)
               </label>
+              {refunding && total > 0 && offBill > 0 && (
+                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                  {cashBack > 0
+                    ? `Only ${money(refundable)} has been paid on this invoice: hand back ${money(cashBack)}. The other ${money(offBill)} was never paid, so it comes off what the invoice still owes.`
+                    : `Nothing has been paid on this invoice, so there is no money to hand back. The ${money(offBill)} comes off what the invoice still owes.`}
+                </p>
+              )}
             </fieldset>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
@@ -159,7 +173,10 @@ export default function ReturnCreate() {
             </div>
           </div>
           <div className="flex flex-wrap justify-end items-center gap-3">
-            <p className="text-lg font-bold text-gray-950 mr-auto">Return total: {money(total)}</p>
+            <p className="text-lg font-bold text-gray-950 mr-auto">
+              Return total: {money(total)}
+              {refunding && total > 0 && <span className="block text-sm font-semibold text-emerald-700">Cash to hand back: {money(cashBack)}</span>}
+            </p>
             <CancelButton onClick={() => navigate('/admin/returns')} />
             <SubmitButton type="button" onClick={save} isLoading={busy} isDisabled={!chosen.length || creditTooBig}>Save Return</SubmitButton>
           </div>
