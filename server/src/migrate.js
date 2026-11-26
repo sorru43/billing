@@ -418,6 +418,10 @@ UPDATE customer_prices cp SET cost_basis = coalesce(
 -- then counts a refund as all cash and an applied credit as all taken off the invoice).
 ALTER TABLE returns ADD COLUMN IF NOT EXISTS applied_amount numeric(14,2);
 ALTER TABLE returns ADD COLUMN IF NOT EXISTS refund_amount numeric(14,2);
+
+-- 2026-11-27: the price level is no longer chosen on invoices (it is set on the customer), so the
+-- short-lived "Choose the price level on invoices" permission is gone.
+DELETE FROM role_permissions WHERE module_slug = 'invoice_price_level';
 `;
 
 // Keep every document-number sequence ahead of the numbers already used. Rows added without the

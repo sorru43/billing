@@ -130,21 +130,17 @@ function buildLines(b, byId) {
 
 const pricesNote = (n) => `${n} price${n === 1 ? '' : 's'} saved as this customer's own`;
 
-// Staff without "Choose the price level on invoices" / "Change prices on invoices" (modules.js).
-// Level: the picked customer's own level, else Selling (an edit may also keep the invoice's own level).
-// Prices: each line must be the price the screen puts there by itself (autoRates); an edit may also keep
-// a price the product already had on the saved invoice. No discounts, and nothing is remembered as a
-// customer price. Changes b.priceLevel and the items' remember flags; returns line errors or null.
+// Level, for everyone: the picked customer's own level (set on the customer), else Selling. There is no
+// level choice on the invoice screen; an edit may keep the level the invoice was saved with.
+// Prices, for staff without "Change prices on invoices" (modules.js): each line must be the price the
+// screen puts there by itself (autoRates); an edit may also keep a price the product already had on the
+// saved invoice. No discounts, and nothing is remembered as a customer price.
+// Changes b.priceLevel and the items' remember flags; returns line errors or null.
 async function applyPriceRules(client, req, b, byId, saved = null) {
-  const mayLevel = can(req, 'invoice_price_level', 'view');
-  const mayPrice = can(req, 'invoice_prices', 'view');
-  if (mayLevel && mayPrice) return null;
   const picked = b.customerId ? (await client.query(`SELECT price_level FROM customers WHERE id=$1`, [b.customerId])).rows[0] : null;
-  if (!mayLevel) {
-    const own = picked?.price_level || 'selling';
-    if (b.priceLevel !== own && b.priceLevel !== saved?.price_level) b.priceLevel = own;
-  }
-  if (mayPrice) return null;
+  const own = picked?.price_level || 'selling';
+  if (b.priceLevel !== own && b.priceLevel !== saved?.price_level) b.priceLevel = own;
+  if (can(req, 'invoice_prices', 'view')) return null;
   const rateOf = await autoRates(client, { customerId: picked ? b.customerId : null, byId, priceLevel: b.priceLevel });
   const kept = new Map(); // productId -> rates it had on the saved invoice
   for (const it of saved?.items || []) {

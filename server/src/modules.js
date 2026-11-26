@@ -13,20 +13,14 @@ export const MODULE_GROUPS = [
       // Without this, staff can open an invoice only right after creating it (until the first print,
       // or 30 minutes) or after an admin approves their request. Only "view" applies.
       { slug: 'invoice_history', moduleName: 'See past invoices (no admin approval needed)', actions: ['view'] },
-      // Without these (view only), the invoice screen sets prices by itself and the server holds to it
-      // (invoices.js, applyPriceRules): each line gets the customer's own price, else the price level's,
-      // and the level is the customer's own (set on the customer), else Selling.
+      // Without it (view only), the invoice screen sets prices by itself and the server holds to it
+      // (invoices.js, applyPriceRules): each line gets the customer's own price, else the price of the
+      // customer's level. The level itself is never chosen on an invoice: it is set on the customer.
       {
         slug: 'invoice_prices',
         moduleName: 'Change prices on invoices',
         actions: ['view'],
         note: "Type a different price on an invoice line. For a saved customer it is kept as their own price for next time.",
-      },
-      {
-        slug: 'invoice_price_level',
-        moduleName: 'Choose the price level on invoices',
-        actions: ['view'],
-        note: "Without it the Price Level box is hidden: the customer's own level is used, else Selling Price.",
       },
       { slug: 'returns', moduleName: 'Returns' },
       { slug: 'receiving', moduleName: 'Receiving Inventory & Vendors' },

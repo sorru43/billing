@@ -812,9 +812,9 @@ const NO_PRICES = { products: new Map(), matrices: new Map(), rise: new Map() };
 // typed by hand ("manual") or kept from the saved invoice ("saved") is never re-priced automatically.
 // A price typed for a saved customer becomes their own price (unless "Keep as their price" is unticked).
 // A new invoice has two steps: the items, then "Next" to the payment (cash, check, Zelle, card).
-// Role permissions (modules.js): without "Change prices on invoices" the price can't be typed over;
-// without "Choose the price level on invoices" there is no level choice: the customer's own level, else
-// Selling. The server applies the same rules (invoices.js, applyPriceRules).
+// There is no price level choice here: the level is the one set on the customer, else Selling.
+// Without the role permission "Change prices on invoices" (modules.js) the price can't be typed over.
+// The server applies the same rules (invoices.js, applyPriceRules).
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { id: editId } = useParams();
@@ -823,7 +823,6 @@ export default function InvoiceCreate() {
   const money = useMoney();
   const { t } = useI18n();
   const canPrice = can('invoice_prices', 'view');
-  const canLevel = can('invoice_price_level', 'view');
   const [step, setStep] = useState('items'); // 'items' | 'payment' (new invoices only)
   const onItems = editing || step === 'items';
   const topRef = useRef(null);
@@ -1007,11 +1006,11 @@ export default function InvoiceCreate() {
     const own = c.priceLevel || 'selling';
     if (own !== form.priceLevel) changeLevel(own);
   };
-  // Typing another name unlinks the saved customer. Staff who can't choose the level go back to Selling.
+  // Typing another name unlinks the saved customer: a walk-in is priced at Selling.
   const typeCustomerName = (e) => {
     const name = e.target.value;
     setForm((f) => ({ ...f, customerName: name, customerId: '' }));
-    if (!canLevel && form.customerId && form.priceLevel !== 'selling') changeLevel('selling');
+    if (form.customerId && form.priceLevel !== 'selling') changeLevel('selling');
   };
 
   // Picking a product fills the row; picking a matrix item opens its variant grid instead.
@@ -1290,7 +1289,7 @@ export default function InvoiceCreate() {
           </div>
           {onItems && (
           <>
-          <div className={`grid grid-cols-1 sm:grid-cols-2 ${canLevel ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4 w-full`}>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
             <div>
               <label className="block text-sm font-medium text-gray-900">{t('inv.invoice_number', 'Invoice Number')}</label>
               <input readOnly value={number} className={`${fieldCls} mt-1 bg-gray-50`} title={editing ? 'The invoice number stays the same' : 'Assigned automatically when saved'} />
@@ -1305,20 +1304,6 @@ export default function InvoiceCreate() {
               <label className="block text-sm font-medium text-gray-700">{t('inv.due_date', 'Due Date')}</label>
               <input type="date" min={form.invoiceDate} value={form.dueDate} onChange={set('dueDate')} className={`${fieldCls} mt-1`} />
             </div>
-            {canLevel && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                {t('inv.price_level', 'Price Level')} <span className="text-red-500">*</span>
-              </label>
-              <select value={form.priceLevel} onChange={(e) => changeLevel(e.target.value)} className={`${fieldCls} mt-1 bg-white`}>
-                {LEVELS.map((l) => (
-                  <option key={l.value} value={l.value}>
-                    {l.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1354,6 +1339,11 @@ export default function InvoiceCreate() {
                     onChange={typeCustomerName}
                     className={`${smallCls} ${customerLocked ? 'bg-gray-50' : ''}`}
                   />
+                  {(form.customerId || form.priceLevel !== 'selling') && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('inv.price_level', 'Price Level')}: <span className="font-semibold text-gray-700">{level.label}</span>
+                    </p>
+                  )}
                   {form.customerId && custPrices.products.size + custPrices.matrices.size > 0 && (
                     <p className="text-xs text-emerald-700 mt-1">
                       {custPrices.products.size + custPrices.matrices.size} custom price(s) for this customer are applied to matching items
