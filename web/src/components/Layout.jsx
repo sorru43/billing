@@ -313,7 +313,7 @@ function Header({ toggleSidebar }) {
             >
               <div className="px-4 py-3">
                 <p className="text-sm font-medium text-gray-950 truncate">{`${user?.firstName || ''} ${user?.lastName || ''}`.trim()}</p>
-                <p className="text-sm text-gray-500 truncate">{user?.email}</p>
+                <p className="text-sm text-gray-500 truncate">{user?.email || user?.username}</p>
                 {user?.roleName && <p className="text-xs text-purple-600 truncate mt-0.5">{user.roleName}</p>}
               </div>
               <div className="py-1">

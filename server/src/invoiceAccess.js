@@ -91,7 +91,7 @@ export async function decideRequest(invoiceId, userId, approve, adminId) {
 export async function pendingRequests() {
   const { rows } = await query(
     `SELECT a.invoice_id, a.user_id, a.requested_at, i.invoice_number, i.customer_name, i.total, i.status,
-            u.first_name, u.last_name, u.email
+            u.first_name, u.last_name, u.email, u.username
        FROM invoice_access a
        JOIN invoices i ON i.id = a.invoice_id
        JOIN users u ON u.id = a.user_id
@@ -105,7 +105,7 @@ export async function pendingRequests() {
     total: r.total,
     status: r.status,
     userId: r.user_id,
-    userName: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.email,
+    userName: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.username || r.email,
     requestedAt: r.requested_at,
   }));
 }

@@ -366,7 +366,7 @@ export function Profile() {
   const { user, refresh } = useAuth();
   const [form, setForm] = useState({ firstName: user.firstName, lastName: user.lastName, phone: user.phone });
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '', confirm: '' });
-  const [login, setLogin] = useState({ email: user.email, currentPassword: '' });
+  const [login, setLogin] = useState({ email: user.email || '', currentPassword: '' });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState('');
   const { hash } = useLocation();

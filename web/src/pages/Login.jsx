@@ -56,7 +56,7 @@ export default function Login() {
             <label htmlFor="email" className="block text-sm font-medium text-gray-700">
               {t('login.email', 'Email Address')}
             </label>
-            <input id="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required className={`${input} mt-1`} />
+            <input id="email" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} required className={`${input} mt-1`} />
           </div>
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-gray-700">

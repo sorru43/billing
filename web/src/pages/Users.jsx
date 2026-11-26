@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
-import { Eye, EyeOff, SquarePen, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, SquarePen, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, formatDate } from '../auth.jsx';
 import { Avatar, CancelButton, ConfirmModal, Field, ListToolbar, Modal, PageHeader, Pagination, Row, SubmitButton, Table, TableState, Toggle, inputCls } from '../components/ui.jsx';
 import { useList } from '../components/useList.js';
 
-const EMPTY = { firstName: '', lastName: '', email: '', phone: '', roleId: '', password: '', status: true };
+const EMPTY = { firstName: '', lastName: '', username: '', email: '', phone: '', roleId: '', password: '', status: true };
+// A readable password the admin can read out to the staff member (no look-alike characters).
+const makePassword = () => {
+  const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+};
 
 export default function Users() {
   const { can, user: me } = useAuth();
@@ -18,6 +24,9 @@ export default function Users() {
   const [showPw, setShowPw] = useState(false);
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  // Admin sets a new password for a staff user (no old password needed).
+  const [pwFor, setPwFor] = useState(null); // { user, password, error }
+  const [pwSaving, setPwSaving] = useState(false);
 
   useEffect(() => {
     api.get('/roles/options').then((r) => setRoles(r.data)).catch(() => {});
@@ -25,9 +34,10 @@ export default function Users() {
 
   const actions = [
     can('users', 'edit') && { label: 'Edit', icon: <SquarePen size={14} />, onClick: (u) => (setErrors({}), setEditing({ ...EMPTY, ...u, password: '' })) },
+    can('users', 'edit') && { label: 'Change Password', icon: <KeyRound size={14} />, onClick: (u) => (setShowPw(true), setPwFor({ user: u, password: '', error: '' })) },
     can('users', 'delete') && { label: 'Delete', icon: <Trash2 size={14} />, onClick: setToDelete },
   ].filter(Boolean);
-  const headers = ['#', 'User Name', 'Phone', 'Role', 'Status', 'Created On'];
+  const headers = ['#', 'Name', 'Login', 'Phone', 'Role', 'Status', 'Created On'];
   if (actions.length) headers.push('Actions');
 
   const set = (k) => (e) => setEditing((u) => ({ ...u, [k]: e.target.value }));
@@ -36,8 +46,8 @@ export default function Users() {
     setSaving(true);
     setErrors({});
     try {
-      const { firstName, lastName, email, phone, roleId, password, status } = editing;
-      const body = { firstName, lastName, email, phone, roleId, password, status };
+      const { firstName, lastName, username, email, phone, roleId, password, status } = editing;
+      const body = { firstName, lastName, username, email, phone, roleId, password, status };
       if (editing.id) await api.put(`/users/${editing.id}`, body);
       else await api.post('/users', body);
       toast.success(editing.id ? 'User updated successfully' : 'User created successfully');
@@ -48,6 +58,20 @@ export default function Users() {
       toast.error(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const savePassword = async (e) => {
+    e.preventDefault();
+    setPwSaving(true);
+    try {
+      const r = await api.put(`/users/${pwFor.user.id}/password`, { password: pwFor.password });
+      toast.success(r.message, { autoClose: 6000 });
+      setPwFor(null);
+    } catch (err) {
+      setPwFor((p) => ({ ...p, error: err.errors?.password || err.message }));
+    } finally {
+      setPwSaving(false);
     }
   };
 
@@ -77,7 +101,11 @@ export default function Users() {
               index={(list.pagination.page - 1) * list.pagination.limit + i + 1}
               row={u}
               columns={[
-                <Avatar name={`${u.firstName} ${u.lastName}`.trim()} sub={u.email} />,
+                <Avatar name={`${u.firstName} ${u.lastName}`.trim()} />,
+                <span className="text-sm">
+                  {u.username && <span className="block font-semibold text-gray-900">{u.username}</span>}
+                  {u.email && <span className="block text-gray-500">{u.email}</span>}
+                </span>,
                 u.phone || '-',
                 u.roleName || <span className="text-red-600">No role</span>,
                 <span className={`text-xs font-semibold ${u.status ? 'text-emerald-700' : 'text-gray-500'}`}>{u.status ? 'Active' : 'Disabled'}</span>,
@@ -100,8 +128,24 @@ export default function Users() {
               <Field label="Last Name" htmlFor="u-last" error={errors.lastName}>
                 <input id="u-last" maxLength={100} value={editing.lastName} onChange={set('lastName')} className={inputCls} />
               </Field>
-              <Field label="Email" required htmlFor="u-email" error={errors.email}>
-                <input id="u-email" type="email" required maxLength={200} value={editing.email} onChange={set('email')} className={inputCls} autoComplete="off" />
+              <Field label="Username / Employee code" required={!editing.email} htmlFor="u-username" error={errors.username}>
+                <input
+                  id="u-username"
+                  required={!editing.email}
+                  maxLength={50}
+                  pattern="[A-Za-z0-9._\-]+"
+                  title="Letters, numbers, dot, dash or underscore (no spaces)"
+                  value={editing.username || ''}
+                  onChange={set('username')}
+                  className={inputCls}
+                  autoComplete="off"
+                  placeholder="e.g. 1023 or maria"
+                />
+                <p className="text-xs text-gray-500 mt-1">What they type to sign in. No spaces.</p>
+              </Field>
+              <Field label="Email (optional)" htmlFor="u-email" error={errors.email}>
+                <input id="u-email" type="email" maxLength={200} value={editing.email || ''} onChange={set('email')} className={inputCls} autoComplete="off" />
+                <p className="text-xs text-gray-500 mt-1">They can also sign in with it.</p>
               </Field>
               <Field label="Phone" htmlFor="u-phone" error={errors.phone}>
                 <input id="u-phone" maxLength={30} value={editing.phone} onChange={set('phone')} className={inputCls} />
@@ -144,6 +188,49 @@ export default function Users() {
             <div className="flex justify-end gap-2">
               <CancelButton onClick={() => setEditing(null)} />
               <SubmitButton isLoading={saving} mode={editing.id ? 'edit' : 'create'} />
+            </div>
+          </form>
+        )}
+      </Modal>
+      <Modal isOpen={Boolean(pwFor)} onClose={() => setPwFor(null)} title="Change Password" size="md">
+        {pwFor && (
+          <form onSubmit={savePassword} className="space-y-4">
+            <p className="text-sm text-gray-600">
+              New password for <b className="text-gray-950">{`${pwFor.user.firstName} ${pwFor.user.lastName}`.trim()}</b>
+              {pwFor.user.username ? ` (${pwFor.user.username})` : pwFor.user.email ? ` (${pwFor.user.email})` : ''}. Their old password stops working and
+              they are signed out.
+            </p>
+            <Field label="New Password" required htmlFor="pw-new" error={pwFor.error}>
+              <div className="relative">
+                <input
+                  id="pw-new"
+                  type={showPw ? 'text' : 'password'}
+                  required
+                  minLength={10}
+                  maxLength={200}
+                  autoComplete="new-password"
+                  value={pwFor.password}
+                  onChange={(e) => setPwFor((p) => ({ ...p, password: e.target.value, error: '' }))}
+                  className={`${inputCls} pr-10`}
+                />
+                <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 top-1 px-3 text-gray-500" aria-label="Show password">
+                  {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <p className="text-xs text-gray-500">At least 10 characters.</p>
+                <button
+                  type="button"
+                  onClick={() => (setShowPw(true), setPwFor((p) => ({ ...p, password: makePassword(), error: '' })))}
+                  className="text-xs font-semibold text-purple-700 hover:underline cursor-pointer"
+                >
+                  Make one for me
+                </button>
+              </div>
+            </Field>
+            <div className="flex justify-end gap-2">
+              <CancelButton onClick={() => setPwFor(null)} />
+              <SubmitButton isLoading={pwSaving}>{pwSaving ? 'Saving...' : 'Change Password'}</SubmitButton>
             </div>
           </form>
         )}

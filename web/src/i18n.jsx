@@ -189,7 +189,7 @@ export const translations = {
     // Login
     'login.welcome': 'Welcome Back',
     'login.signin_desc': 'Sign in to access the dashboard',
-    'login.email': 'Email Address',
+    'login.email': 'Username or Email',
     'login.password': 'Password',
     'login.remember': 'Remember me',
     'login.button': 'Login',
@@ -420,7 +420,7 @@ export const translations = {
     // Login
     'login.welcome': 'Bienvenue',
     'login.signin_desc': 'Connectez-vous pour accéder au tableau de bord',
-    'login.email': 'Adresse email',
+    'login.email': "Nom d'utilisateur ou email",
     'login.password': 'Mot de passe',
     'login.remember': 'Se souvenir de moi',
     'login.button': 'Connexion',

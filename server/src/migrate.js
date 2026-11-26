@@ -422,6 +422,18 @@ ALTER TABLE returns ADD COLUMN IF NOT EXISTS refund_amount numeric(14,2);
 -- 2026-11-27: the price level is no longer chosen on invoices (it is set on the customer), so the
 -- short-lived "Choose the price level on invoices" permission is gone.
 DELETE FROM role_permissions WHERE module_slug = 'invoice_price_level';
+
+-- 2026-11-27: staff can sign in with a username (an employee code like 1023 also works) instead of an
+-- email. Email is optional for them; every user needs at least one of the two. Usernames are unique
+-- ignoring case and can't contain "@", so a login name is never both a username and an email.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username text;
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_uq ON users (lower(username)) WHERE username IS NOT NULL;
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_login_ck') THEN
+    ALTER TABLE users ADD CONSTRAINT users_login_ck CHECK (email IS NOT NULL OR username IS NOT NULL);
+  END IF;
+END $$;
 `;
 
 // Keep every document-number sequence ahead of the numbers already used. Rows added without the

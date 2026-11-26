@@ -25,8 +25,10 @@ const loginLimiter = rateLimit({
 // A fixed dummy hash so unknown emails take as long as wrong passwords (no user enumeration by timing).
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 12);
 
+// "email" is the login name: an email, or a staff username / employee code (usernames have no "@",
+// so the two never clash). The field keeps its old name so older browser tabs still sign in.
 const loginSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(200),
+  email: z.string().trim().toLowerCase().min(1, 'Enter your username or email').max(200),
   password: z.string().min(1).max(200),
   remember: z.boolean().optional(),
 });
@@ -35,12 +37,13 @@ r.post('/login', loginLimiter, h(async (req, res) => {
   const body = validate(loginSchema, req.body, res);
   if (!body) return;
   const { rows } = await query(
-    `SELECT u.*, r.role_name FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.email = $1`,
+    `SELECT u.*, r.role_name FROM users u LEFT JOIN roles r ON r.id = u.role_id
+      WHERE ${body.email.includes('@') ? 'lower(u.email) = $1' : 'lower(u.username) = $1'}`,
     [body.email],
   );
   const user = rows[0];
   const valid = await bcrypt.compare(body.password, user?.password_hash || DUMMY_HASH);
-  if (!user || !valid) return fail(res, 401, 'Invalid email or password');
+  if (!user || !valid) return fail(res, 401, 'Invalid username or password');
   if (!user.status) return fail(res, 403, 'This account is disabled. Contact your administrator.');
   issueSession(res, user, body.remember);
   ok(res, { user: publicUser(user) }, 'Login successful');
