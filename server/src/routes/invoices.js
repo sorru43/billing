@@ -8,7 +8,7 @@ import { getSetting } from '../settings.js';
 import { invoicePdf } from '../pdf.js';
 import { invoiceEmail, startRetentionWindow } from '../archive.js';
 import { receiveCustomerPayment, useCustomerCredit } from '../balance.js';
-import { rememberPrices } from '../customerPrices.js';
+import { rememberPrices, autoRates } from '../customerPrices.js';
 import { returnMoney } from '../returnMoney.js';
 import {
   LOCKED_MESSAGE, seesAllInvoices, lockState, openWindow, closeAfterPrint, requestAccess, decideRequest, pendingRequests, hasOpenWindow,
@@ -130,6 +130,43 @@ function buildLines(b, byId) {
 
 const pricesNote = (n) => `${n} price${n === 1 ? '' : 's'} saved as this customer's own`;
 
+// Staff without "Choose the price level on invoices" / "Change prices on invoices" (modules.js).
+// Level: the picked customer's own level, else Selling (an edit may also keep the invoice's own level).
+// Prices: each line must be the price the screen puts there by itself (autoRates); an edit may also keep
+// a price the product already had on the saved invoice. No discounts, and nothing is remembered as a
+// customer price. Changes b.priceLevel and the items' remember flags; returns line errors or null.
+async function applyPriceRules(client, req, b, byId, saved = null) {
+  const mayLevel = can(req, 'invoice_price_level', 'view');
+  const mayPrice = can(req, 'invoice_prices', 'view');
+  if (mayLevel && mayPrice) return null;
+  const picked = b.customerId ? (await client.query(`SELECT price_level FROM customers WHERE id=$1`, [b.customerId])).rows[0] : null;
+  if (!mayLevel) {
+    const own = picked?.price_level || 'selling';
+    if (b.priceLevel !== own && b.priceLevel !== saved?.price_level) b.priceLevel = own;
+  }
+  if (mayPrice) return null;
+  const rateOf = await autoRates(client, { customerId: picked ? b.customerId : null, byId, priceLevel: b.priceLevel });
+  const kept = new Map(); // productId -> rates it had on the saved invoice
+  for (const it of saved?.items || []) {
+    if (!kept.has(it.productId)) kept.set(it.productId, new Set());
+    kept.get(it.productId).add(round2(Number(it.rate)));
+  }
+  const errors = {};
+  b.items.forEach((it, idx) => {
+    it.remember = false;
+    const p = byId.get(it.productId);
+    if (!p) return;
+    const auto = rateOf(it.productId);
+    const rate = round2(it.rate);
+    if (rate !== auto && !kept.get(it.productId)?.has(rate)) {
+      errors[`items.${idx}.rate`] = `Your role can't change prices: "${p.name}" is ${auto.toFixed(2)}. Remove the line and add it again.`;
+    } else if (round2(it.discount) > 0) {
+      errors[`items.${idx}.rate`] = `Your role can't give discounts on "${p.name}"`;
+    }
+  });
+  return Object.keys(errors).length ? errors : null;
+}
+
 // Link to the saved customer: the one picked, else a match by email, else by a unique exact name.
 async function resolveCustomer(client, b) {
   if (b.customerId) {
@@ -248,6 +285,7 @@ r.post('/', requirePerm('invoices', 'create'), h(async (req, res) => {
       if (!p || !p.status || p.matrix_status === false) errors[`items.${idx}.productId`] = 'Product not found or inactive';
       else if (!allowOversell && needed.get(p.id) > p.quantity) errors[`items.${idx}.quantity`] = `Only ${p.quantity} of "${p.name}" in stock`;
     });
+    Object.assign(errors, (await applyPriceRules(client, req, b, byId)) || {});
     if (Object.keys(errors).length) return { errors };
 
     const { items, subtotal, discountTotal, taxTotal, total } = buildLines(b, byId);
@@ -515,6 +553,7 @@ r.put('/:id', requirePerm('invoices', 'edit'), h(async (req, res) => {
       const available = p.quantity + had; // this invoice's own quantity comes back first
       if (!allowOversell && want > had && want > available) errors[`items.${idx}.quantity`] = `Only ${available} of "${p.name}" available`;
     });
+    Object.assign(errors, (await applyPriceRules(client, req, b, byId, inv)) || {});
     if (Object.keys(errors).length) return { status: 422, message: 'Please fix the highlighted items', errors };
 
     const { items, subtotal, discountTotal, taxTotal, total } = buildLines(b, byId);

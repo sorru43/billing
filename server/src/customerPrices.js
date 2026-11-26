@@ -26,6 +26,36 @@ export function followCost(price, basis, cost) {
 }
 
 /**
+ * The price an invoice line gets when nobody types one (the same rule as the invoice screen):
+ * the customer's own price for the product, else for its matrix item (both as raised with cost),
+ * else the product's price at the invoice's price level.
+ * byId: Map productId -> product row (needs matrix_id and the three price columns).
+ * Returns rateOf(productId) -> number, or null for a product not in byId.
+ */
+export async function autoRates(db, { customerId, byId, priceLevel }) {
+  const own = new Map();
+  const ofMatrix = new Map();
+  if (customerId) {
+    const { rows } = await db.query(
+      `SELECT cp.product_id, cp.matrix_id, cp.price, cp.cost_basis, ${ITEM_COST_SQL} AS item_cost
+         FROM customer_prices cp
+         LEFT JOIN products p ON p.id = cp.product_id
+         LEFT JOIN product_matrices m ON m.id = cp.matrix_id
+        WHERE cp.customer_id = $1`,
+      [customerId],
+    );
+    for (const x of rows) (x.product_id ? own : ofMatrix).set(x.product_id || x.matrix_id, round2(followCost(x.price, x.cost_basis, x.item_cost)));
+  }
+  return (pid) => {
+    const p = byId.get(pid);
+    if (!p) return null;
+    if (own.has(pid)) return own.get(pid);
+    if (p.matrix_id && ofMatrix.has(p.matrix_id)) return ofMatrix.get(p.matrix_id);
+    return round2(Number(p[PRICE_FIELD[priceLevel]] || 0));
+  };
+}
+
+/**
  * Remember the prices given on an invoice as the customer's own, so their next invoice starts there.
  * Only lines marked `remember` count, and only when the price differs from what the invoice would
  * have used anyway (their own price as it is now, else their price level). A flavor of a matrix item

@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'react-toastify';
-import { Banknote, Building2, CheckSquare, CirclePlus, CreditCard, FileCheck, Grid3x3, HelpCircle, Printer, Send, Smartphone, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Banknote, Building2, CheckSquare, CirclePlus, CreditCard, FileCheck, Grid3x3, HelpCircle, Maximize2, Minimize2, Printer, Send, Smartphone, Trash2, XCircle } from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth, useMoney, Logo } from '../auth.jsx';
 import { useI18n } from '../i18n.jsx';
 import { CancelButton, Modal, SubmitButton, useDebounced } from '../components/ui.jsx';
 import MatrixGridModal from '../components/MatrixGridModal.jsx';
-import { ScanBar, ScanProblemModal, beep, useStoredFlag } from '../components/BarcodeScan.jsx';
+import { ScanBar, ScanProblemModal, beep, useScannerKeys, useStoredFlag } from '../components/BarcodeScan.jsx';
+import { ChromeContext } from '../components/Layout.jsx';
 
 const LEVELS = [
   { value: 'selling', label: 'Selling Price', field: 'selling_price' },
@@ -810,6 +811,10 @@ const NO_PRICES = { products: new Map(), matrices: new Map(), rise: new Map() };
 // price for that product (or its matrix item) when there is one, else from the price level; a price
 // typed by hand ("manual") or kept from the saved invoice ("saved") is never re-priced automatically.
 // A price typed for a saved customer becomes their own price (unless "Keep as their price" is unticked).
+// A new invoice has two steps: the items, then "Next" to the payment (cash, check, Zelle, card).
+// Role permissions (modules.js): without "Change prices on invoices" the price can't be typed over;
+// without "Choose the price level on invoices" there is no level choice: the customer's own level, else
+// Selling. The server applies the same rules (invoices.js, applyPriceRules).
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { id: editId } = useParams();
@@ -817,6 +822,51 @@ export default function InvoiceCreate() {
   const { company, can } = useAuth();
   const money = useMoney();
   const { t } = useI18n();
+  const canPrice = can('invoice_prices', 'view');
+  const canLevel = can('invoice_price_level', 'view');
+  const [step, setStep] = useState('items'); // 'items' | 'payment' (new invoices only)
+  const onItems = editing || step === 'items';
+  const topRef = useRef(null);
+  const goStep = (s) => {
+    setStep(s);
+    topRef.current?.scrollIntoView({ block: 'start' });
+  };
+
+  // Full screen: no sidebar or top bar, only the invoice (and the browser's own full screen when it allows).
+  const [fullScreen, setFullScreen] = useState(false);
+  const { setHideChrome } = useContext(ChromeContext);
+  useEffect(() => {
+    setHideChrome(fullScreen);
+    return () => setHideChrome(false);
+  }, [fullScreen, setHideChrome]);
+  useEffect(
+    () => () => {
+      // Leaving the page (e.g. to the saved invoice) brings the browser out of full screen too.
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    },
+    [],
+  );
+  const toggleFullScreen = () => {
+    const next = !fullScreen;
+    setFullScreen(next);
+    try {
+      if (next && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+      if (!next && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    } catch {
+      /* the browser doesn't allow it: the sidebar and top bar are still hidden */
+    }
+  };
+  const fullScreenButton = (
+    <button
+      type="button"
+      onClick={toggleFullScreen}
+      className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 cursor-pointer"
+      title={fullScreen ? t('inv.exit_full_screen', 'Exit full screen') : t('inv.full_screen', 'Full screen')}
+    >
+      {fullScreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+      <span className="hidden sm:inline">{fullScreen ? t('inv.exit_full_screen', 'Exit full screen') : t('inv.full_screen', 'Full screen')}</span>
+    </button>
+  );
   const [number, setNumber] = useState('');
   const [payment, setPayment] = useState(EMPTY_PAYMENT);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -904,10 +954,17 @@ export default function InvoiceCreate() {
   const scanCache = useRef(new Map()); // barcode -> product, so repeat scans are instant
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
-  // Back to the scan box once the popup closes, so the next scan goes in.
+  // Back to the scan box once the popup closes (or the items step is back), so the next scan goes in.
   useEffect(() => {
-    if (scanMode && !scanProblem) scanBoxRef.current?.focus();
-  }, [scanMode, scanProblem]);
+    if (scanMode && !scanProblem && step === 'items') scanBoxRef.current?.focus();
+  }, [scanMode, scanProblem, step]);
+  // A scan on the payment step must not type a barcode into a payment amount: it goes back to the
+  // items and adds the item there.
+  const noBoxRef = useRef(null);
+  useScannerKeys(scanMode && step === 'payment', (code) => {
+    setStep('items');
+    handleScan(code);
+  }, noBoxRef);
 
   const loadNextNumber = () =>
     api.get('/invoices/next-number').then((r) => {
@@ -947,7 +1004,14 @@ export default function InvoiceCreate() {
   const pickCustomer = (c) => {
     const address = [c.company, c.address, c.taxNumber && `Tax No: ${c.taxNumber}`].filter(Boolean).join('\n');
     setForm((f) => ({ ...f, customerId: c.id, customerName: c.name, customerEmail: c.email, customerPhone: c.phone, customerAddress: address }));
-    if (c.priceLevel && c.priceLevel !== form.priceLevel) changeLevel(c.priceLevel);
+    const own = c.priceLevel || 'selling';
+    if (own !== form.priceLevel) changeLevel(own);
+  };
+  // Typing another name unlinks the saved customer. Staff who can't choose the level go back to Selling.
+  const typeCustomerName = (e) => {
+    const name = e.target.value;
+    setForm((f) => ({ ...f, customerName: name, customerId: '' }));
+    if (!canLevel && form.customerId && form.priceLevel !== 'selling') changeLevel('selling');
   };
 
   // Picking a product fills the row; picking a matrix item opens its variant grid instead.
@@ -1106,9 +1170,18 @@ export default function InvoiceCreate() {
     return filled;
   };
 
+  // Step 1 → 2: the items are checked here; stock and prices are checked by the server on save.
+  const goToPayment = () => {
+    if (!validateInvoice()) return;
+    goStep('payment');
+  };
+
   const handleSave = async (overridePayment) => {
     const filled = validateInvoice();
-    if (!filled) return;
+    if (!filled) {
+      if (step !== 'items') goStep('items'); // show what's missing
+      return;
+    }
     setSaving(true);
     const activePayment = overridePayment !== undefined ? overridePayment : payment;
     const items = filled.map((l) => ({
@@ -1135,20 +1208,25 @@ export default function InvoiceCreate() {
       else setSaved({ id: data.id, invoiceNumber: data.invoiceNumber, total: Number(data.total), customerName: data.customerName });
     } catch (err) {
       const mapped = {};
+      let onItems = false; // an error the items step shows (a line, the customer)
       for (const [k, v] of Object.entries(err.errors || {})) {
         const m = k.match(/^items\.(\d+)\.(\w+)$/);
         if (m && filled[Number(m[1])]) mapped[`${filled[Number(m[1])].key}.${m[2]}`] = v;
         else mapped[k] = v;
+        if (m || k === 'items' || k.startsWith('customer')) onItems = true;
       }
       setErrors(mapped);
+      if (onItems && step !== 'items') goStep('items');
       toast.error(err.message);
     } finally {
       setSaving(false);
     }
   };
 
+  // Enter in a field, or the main button: a new invoice goes from the items to the payment, then saves.
   const handleDone = (e) => {
     if (e) e.preventDefault();
+    if (!editing && step === 'items') return goToPayment();
     const filled = validateInvoice();
     if (!filled) return;
     handleSave();
@@ -1162,6 +1240,7 @@ export default function InvoiceCreate() {
     setPayment(EMPTY_PAYMENT);
     setErrors({});
     setScanStatus(null);
+    goStep('items');
     loadNextNumber();
   };
 
@@ -1196,14 +1275,22 @@ export default function InvoiceCreate() {
   }
 
   return (
-    <div className="md:p-4 min-h-screen border border-gray-200 rounded">
+    <div ref={topRef} className="md:p-4 min-h-screen border border-gray-200 rounded">
       <form onSubmit={handleDone}>
         <div className="max-w-7xl mx-auto space-y-4 p-2">
-          <div className="flex justify-between items-center mb-2">
-            <h1 className="text-2xl font-bold text-gray-950 ">{editing ? `${t('inv.edit_invoice', 'Edit Invoice')} ${number}` : t('inv.new_invoice', 'New Invoice')}</h1>
-            <Logo kind="invoice" alt="" />
+          <div className="flex justify-between items-center gap-3 mb-2">
+            <h1 className="text-2xl font-bold text-gray-950 ">
+              {editing ? `${t('inv.edit_invoice', 'Edit Invoice')} ${number}` : t('inv.new_invoice', 'New Invoice')}
+              {!editing && step === 'payment' && <span className="text-gray-400 font-semibold"> · {t('inv.payment', 'Payment')}</span>}
+            </h1>
+            <div className="flex items-center gap-3">
+              {fullScreenButton}
+              <Logo kind="invoice" alt="" />
+            </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 w-full">
+          {onItems && (
+          <>
+          <div className={`grid grid-cols-1 sm:grid-cols-2 ${canLevel ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4 w-full`}>
             <div>
               <label className="block text-sm font-medium text-gray-900">{t('inv.invoice_number', 'Invoice Number')}</label>
               <input readOnly value={number} className={`${fieldCls} mt-1 bg-gray-50`} title={editing ? 'The invoice number stays the same' : 'Assigned automatically when saved'} />
@@ -1218,6 +1305,7 @@ export default function InvoiceCreate() {
               <label className="block text-sm font-medium text-gray-700">{t('inv.due_date', 'Due Date')}</label>
               <input type="date" min={form.invoiceDate} value={form.dueDate} onChange={set('dueDate')} className={`${fieldCls} mt-1`} />
             </div>
+            {canLevel && (
             <div>
               <label className="block text-sm font-medium text-gray-700">
                 {t('inv.price_level', 'Price Level')} <span className="text-red-500">*</span>
@@ -1230,19 +1318,8 @@ export default function InvoiceCreate() {
                 ))}
               </select>
             </div>
+            )}
           </div>
-
-          {!editing && (
-          <div className="bg-white p-4 rounded-lg border border-gray-200 flex flex-wrap items-center gap-4">
-            <label className="text-sm font-medium text-gray-700">{t('inv.status', 'Payment Status')}</label>
-            {['unpaid', 'paid'].map((s) => (
-              <label key={s} className="flex items-center cursor-pointer">
-                <input type="radio" name="status" value={s} checked={form.status === s} onChange={set('status')} className="h-4 w-4 accent-purple-600" />
-                <span className="ml-2 text-sm text-gray-700 capitalize">{s === 'unpaid' ? t('inv.status_unpaid', 'Unpaid') : t('inv.status_paid', 'Paid in Full')}</span>
-              </label>
-            ))}
-          </div>
-          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-white p-4 rounded-lg border border-gray-200">
@@ -1274,7 +1351,7 @@ export default function InvoiceCreate() {
                     placeholder="Customer name *"
                     value={form.customerName}
                     readOnly={customerLocked}
-                    onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value, customerId: '' }))}
+                    onChange={typeCustomerName}
                     className={`${smallCls} ${customerLocked ? 'bg-gray-50' : ''}`}
                   />
                   {form.customerId && custPrices.products.size + custPrices.matrices.size > 0 && (
@@ -1368,9 +1445,12 @@ export default function InvoiceCreate() {
                           min="0"
                           step="0.01"
                           value={l.rate}
-                          onChange={(e) => setRow(l.key, { rate: e.target.value, source: 'manual' })}
-                          className={`${smallCls} ${l.source === 'customer' ? 'border-emerald-400 bg-emerald-50/40' : ''}`}
+                          readOnly={!canPrice}
+                          title={canPrice ? undefined : t('inv.price_locked', "Your role can't change prices")}
+                          onChange={(e) => canPrice && setRow(l.key, { rate: e.target.value, source: 'manual' })}
+                          className={`${smallCls} ${!canPrice ? 'bg-gray-50 cursor-not-allowed' : ''} ${l.source === 'customer' ? 'border-emerald-400 bg-emerald-50/40' : ''} ${errors[`${l.key}.rate`] ? 'border-red-500' : ''}`}
                         />
+                        {errors[`${l.key}.rate`] && <p className="text-xs text-red-600 mt-1 max-w-[14rem]">{errors[`${l.key}.rate`]}</p>}
                         {l.product && l.source === 'customer' && (
                           <p className="text-[11px] text-emerald-700 mt-1 whitespace-nowrap">
                             {t('inv.customer_price', 'Customer price')}
@@ -1412,7 +1492,7 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-            <div className="lg:col-span-5 space-y-4">
+            <div className="lg:col-span-7 space-y-4">
               <div>
                 <h2 className="text-xl font-bold text-gray-950 mb-2">{t('inv.extra_info', 'Extra Information')}</h2>
                 <label className="block text-sm font-medium text-gray-700">{t('inv.notes', 'Additional Notes')}</label>
@@ -1425,7 +1505,9 @@ export default function InvoiceCreate() {
                   className="mt-1 border border-gray-300 rounded-md px-4 py-2 w-full text-gray-950 focus:outline-none focus:ring-1 focus:ring-purple-600"
                 />
               </div>
+            </div>
 
+            <div className="lg:col-span-5 space-y-4">
               {/* Total Card */}
               <div className="bg-gradient-to-br from-purple-50 to-white p-4 rounded-xl border border-purple-200 shadow-2xs">
                 <p className="text-xs font-bold uppercase tracking-wider text-purple-700 mb-1">{t('inv.invoice_total', 'Invoice Total')}</p>
@@ -1434,11 +1516,7 @@ export default function InvoiceCreate() {
                   {lines.filter((l) => l.product).length} item(s) · Subtotal {money(subtotal)}
                 </p>
               </div>
-            </div>
-
-            {/* Payment Section (matching handwritten sketch) */}
-            <div className="lg:col-span-7">
-              {editing ? (
+              {editing && (
                 <div className="bg-white p-4 rounded-lg border border-gray-200 text-sm text-gray-700 space-y-1">
                   <p className="font-bold text-gray-950">{t('inv.payments', 'Payments')}</p>
                   <p>
@@ -1453,17 +1531,43 @@ export default function InvoiceCreate() {
                   )}
                   <p className="text-xs text-gray-500">Payments aren&apos;t changed here. Record them with “Mark as Paid” on the invoice page.</p>
                 </div>
-              ) : (
-                <InvoicePaymentSection
-                  total={total}
-                  payment={payment}
-                  setPayment={setPayment}
-                  money={money}
-                  customerId={form.customerId}
-                />
               )}
             </div>
           </div>
+          </>
+          )}
+
+          {/* Step 2 of a new invoice: the payment (after "Next") */}
+          {!editing && step === 'payment' && (
+            <div className="max-w-3xl mx-auto space-y-4">
+              <div className="bg-gradient-to-br from-purple-50 to-white p-4 rounded-xl border border-purple-200 shadow-2xs flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-purple-700 mb-1">{t('inv.invoice_total', 'Invoice Total')}</p>
+                  <p className="text-3xl font-extrabold text-gray-950 tracking-tight">{money(total)}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {number} · {form.customerName} · {lines.filter((l) => l.product).length} item(s)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => goStep('items')}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-purple-700 bg-white border border-purple-200 rounded-lg hover:bg-purple-50 cursor-pointer"
+                >
+                  <ArrowLeft size={16} /> {t('inv.back_to_items', 'Back to items')}
+                </button>
+              </div>
+              <div className="bg-white p-4 rounded-lg border border-gray-200 flex flex-wrap items-center gap-4">
+                <label className="text-sm font-medium text-gray-700">{t('inv.status', 'Payment Status')}</label>
+                {['unpaid', 'paid'].map((s) => (
+                  <label key={s} className="flex items-center cursor-pointer">
+                    <input type="radio" name="status" value={s} checked={form.status === s} onChange={set('status')} className="h-4 w-4 accent-purple-600" />
+                    <span className="ml-2 text-sm text-gray-700 capitalize">{s === 'unpaid' ? t('inv.status_unpaid', 'Unpaid') : t('inv.status_paid', 'Paid in Full')}</span>
+                  </label>
+                ))}
+              </div>
+              <InvoicePaymentSection total={total} payment={payment} setPayment={setPayment} money={money} customerId={form.customerId} />
+            </div>
+          )}
 
           {editing ? (
           <div className="flex justify-end items-center gap-3 pt-3 border-t border-gray-200">
@@ -1477,7 +1581,7 @@ export default function InvoiceCreate() {
               {saving ? t('action.saving', 'Saving...') : t('action.save_changes', 'Save Changes')}
             </button>
           </div>
-          ) : (
+          ) : step === 'items' ? (
           <div className="flex justify-end items-center gap-3 pt-3 border-t border-gray-200">
             <CancelButton onClick={() => navigate(can('invoices', 'view') ? '/admin/invoices' : '/admin')} label={t('action.cancel', 'Cancel')} />
             <button
@@ -1487,6 +1591,25 @@ export default function InvoiceCreate() {
               className="px-4 py-2.5 text-sm font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg shadow-2xs cursor-pointer transition-colors"
             >
               {t('inv.save_unpaid', 'Save as Unpaid')}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={goToPayment}
+              className="px-8 py-2.5 text-base font-bold text-white bg-purple-600 hover:bg-purple-700 active:bg-gray-950 rounded-lg shadow-md cursor-pointer transition-colors flex items-center gap-2"
+            >
+              {t('inv.next', 'Next')} <ArrowRight size={18} />
+            </button>
+          </div>
+          ) : (
+          <div className="max-w-3xl mx-auto flex justify-end items-center gap-3 pt-3 border-t border-gray-200">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => goStep('items')}
+              className="mr-auto inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg shadow-2xs cursor-pointer transition-colors"
+            >
+              <ArrowLeft size={16} /> {t('inv.back', 'Back')}
             </button>
             <button
               type="button"

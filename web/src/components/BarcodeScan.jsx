@@ -66,7 +66,7 @@ function setFieldValue(el, value) {
 // Anything inside [data-no-scan] (the quick add form) is left alone.
 const PAGE_GAP_MS = 80;
 const FIELD_GAP_MS = 50;
-function useScannerKeys(enabled, onScan, boxRef) {
+export function useScannerKeys(enabled, onScan, boxRef) {
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
   useEffect(() => {

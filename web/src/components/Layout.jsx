@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   ArrowDownUp, Box, PackagePlus, Undo2, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
@@ -352,8 +352,13 @@ function Header({ toggleSidebar }) {
   );
 }
 
+// A page can hide the sidebar and top bar (New Invoice's "Full screen"): setHideChrome(true / false).
+export const ChromeContext = createContext({ setHideChrome: () => {} });
+
 export default function Layout() {
   const [isOpen, setIsOpen] = useState(true);
+  const [hideChrome, setHideChrome] = useState(false);
+  const chrome = useMemo(() => ({ setHideChrome }), []);
   useEffect(() => {
     const onResize = () => setIsOpen(window.innerWidth >= 768);
     window.addEventListener('resize', onResize);
@@ -361,10 +366,11 @@ export default function Layout() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   return (
+    <ChromeContext.Provider value={chrome}>
     <div className="flex h-screen bg-white font-sans">
-      <Sidebar isOpen={isOpen} />
+      {!hideChrome && <Sidebar isOpen={isOpen} />}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header toggleSidebar={() => setIsOpen((o) => !o)} />
+        {!hideChrome && <Header toggleSidebar={() => setIsOpen((o) => !o)} />}
         <main className="flex-1 overflow-x-hidden overflow-y-auto p-4">
           {/* On paper, .print-edge is the page margin on every printed page (see index.css). */}
           <div className="print-frame">
@@ -377,5 +383,6 @@ export default function Layout() {
         </main>
       </div>
     </div>
+    </ChromeContext.Provider>
   );
 }
