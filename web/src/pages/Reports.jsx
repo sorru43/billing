@@ -26,14 +26,67 @@ import { Field, Loader, Modal, StatusBadge, SubmitButton, inputCls } from '../co
 
 const ICONS = {
   sales: <ReceiptText size={20} />,
+  unpaid: <Clock size={20} />,
+  paid: <CheckCircle2 size={20} />,
   inventory: <ChartNoAxesColumn size={20} />,
   'low-stock': <TriangleAlert size={20} />,
   'out-of-stock': <PackageX size={20} />,
   'price-list': <Tags size={20} />,
 };
 
+const PRODUCT_REPORTS = ['inventory', 'low-stock', 'out-of-stock', 'price-list'];
+const DATE_REPORTS = ['unpaid', 'paid'];
+
+// Any report but Sales, on screen: its summary cards and table (GET /reports/view).
+function ReportResult({ view, loading }) {
+  if (loading && !view) return <Loader className="h-40" />;
+  if (!view) return null;
+  return (
+    <div className={`space-y-4 ${loading ? 'opacity-60' : ''}`}>
+      <p className="text-xs text-gray-500">{view.subtitle}</p>
+      {view.summary?.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {view.summary.map((x) => (
+            <div key={x.label} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">{x.label}</p>
+              <p className="text-xl font-bold text-gray-900 mt-1">{x.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-gray-100/70 text-xs font-semibold uppercase tracking-wider text-gray-600 border-b border-gray-200">
+            <tr>
+              {view.columns.map((c) => (
+                <th key={c.key} className={`py-3 px-4 ${c.align === 'right' ? 'text-right' : ''}`}>{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {view.rows.map((row, i) => (
+              <tr key={i} className="hover:bg-gray-50">
+                {view.columns.map((c) => (
+                  <td key={c.key} className={`py-2.5 px-4 text-gray-700 ${c.align === 'right' ? 'text-right' : ''}`}>{row[c.key]}</td>
+                ))}
+              </tr>
+            ))}
+            {!view.rows.length && (
+              <tr>
+                <td colSpan={view.columns.length} className="py-10 text-center text-gray-500">Nothing to show</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 const DESCRIPTIONS = {
   sales: 'Total sale value, paid and owed with today, 7-day, monthly & custom filters. Deleted invoice sales are permanently recorded.',
+  unpaid: 'Every invoice still owed (part-paid included), oldest first, with how many days late.',
+  paid: 'Invoices paid in full, including ones already archived or deleted.',
   inventory: 'Every product with quantity on hand and stock value at cost and selling price.',
   'low-stock': "Products at or below each product's own alert level (or one threshold you choose).",
   'out-of-stock': 'Products with no stock left.',
@@ -45,8 +98,10 @@ export default function Reports() {
   const money = useMoney();
 
   const [types, setTypes] = useState(null);
+  const [canSend, setCanSend] = useState({}); // report type -> this role may email it
   const [categories, setCategories] = useState([]);
-  const [reportType, setReportType] = useState('sales');
+  // set once the reports this role may open are known (Sales first when it is one of them)
+  const [reportType, setReportType] = useState('');
 
   // Sales report filter state (Today is default)
   const [period, setPeriod] = useState('today');
@@ -62,14 +117,19 @@ export default function Reports() {
   const [sendingEmail, setSendingEmail] = useState(false);
 
   // Non-sales report params
-  const [otherParams, setOtherParams] = useState({ categoryId: '', threshold: '' });
+  const [otherParams, setOtherParams] = useState({ categoryId: '', threshold: '', from: '', until: '' });
+  const [view, setView] = useState(null);
+  const [loadingView, setLoadingView] = useState(false);
 
   useEffect(() => {
     api
       .get('/reports/types')
       .then(({ data }) => {
         setTypes(data.types);
+        setCanSend(data.canSend || {});
         setEmailTo(data.defaultRecipient || '');
+        // only the reports this role may open; Sales first when it is one of them
+        setReportType(data.types.sales ? 'sales' : Object.keys(data.types)[0] || '');
       })
       .catch((e) => toast.error(e.message));
     api.get('/categories/options').then((r) => setCategories(r.data)).catch(() => {});
@@ -121,6 +181,21 @@ export default function Reports() {
       fetchSales(period, customFrom, customUntil);
     }
   }, [reportType, period]);
+
+  // The other reports on screen, again whenever their options change.
+  useEffect(() => {
+    if (!reportType || reportType === 'sales') return undefined;
+    let live = true;
+    setLoadingView(true);
+    api
+      .get('/reports/view', { type: reportType, ...otherParams })
+      .then(({ data }) => live && setView(data))
+      .catch((err) => live && (setView(null), toast.error(err.message)))
+      .finally(() => live && setLoadingView(false));
+    return () => {
+      live = false;
+    };
+  }, [reportType, otherParams]);
 
   const handlePeriodChange = (p) => {
     setPeriod(p);
@@ -194,8 +269,8 @@ export default function Reports() {
       const payload = {
         type: reportType,
         to: emailTo,
-        from: reportType === 'sales' ? salesData?.summary?.from || customFrom : customFrom,
-        until: reportType === 'sales' ? salesData?.summary?.until || customUntil : customUntil,
+        from: reportType === 'sales' ? salesData?.summary?.from || customFrom : otherParams.from,
+        until: reportType === 'sales' ? salesData?.summary?.until || customUntil : otherParams.until,
         categoryId: otherParams.categoryId,
         threshold: otherParams.threshold,
       };
@@ -235,7 +310,7 @@ export default function Reports() {
       </div>
 
       {/* Report Type Selector Pills */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {Object.entries(types).map(([key, label]) => (
           <button
             type="button"
@@ -328,7 +403,7 @@ export default function Reports() {
               >
                 <Download size={14} /> Export by Customer
               </button>
-              {can('reports', 'create') && (
+              {canSend.sales && (
                 <button
                   type="button"
                   onClick={() => setEmailModalOpen(true)}
@@ -542,68 +617,93 @@ export default function Reports() {
         </div>
       )}
 
-      {/* OTHER REPORT TYPES (Inventory, Low Stock, Out of Stock, Price List) */}
-      {reportType !== 'sales' && (
-        <form onSubmit={sendEmail} className="p-6 bg-white border border-gray-200 rounded-xl space-y-5 shadow-sm">
-          <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
-            <FileText size={20} className="text-purple-600" />
-            <h2 className="text-lg font-bold text-gray-900">{types[reportType]}</h2>
-          </div>
+      {/* OTHER REPORTS (Unpaid, Paid, Inventory, Low Stock, Out of Stock, Price List): on screen, and by email when allowed */}
+      {reportType && reportType !== 'sales' && (
+        <div className="space-y-4">
+          <form onSubmit={sendEmail} className="p-6 bg-white border border-gray-200 rounded-xl space-y-5 shadow-sm">
+            <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+              <FileText size={20} className="text-purple-600" />
+              <h2 className="text-lg font-bold text-gray-900">{types[reportType]}</h2>
+            </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Category Filter" htmlFor="r-cat">
-              <select
-                id="r-cat"
-                value={otherParams.categoryId}
-                onChange={(e) => setOtherParams((p) => ({ ...p, categoryId: e.target.value }))}
-                className={`${inputCls} bg-white h-[42px]`}
-              >
-                <option value="">All categories</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {PRODUCT_REPORTS.includes(reportType) && (
+                <Field label="Category Filter" htmlFor="r-cat">
+                  <select
+                    id="r-cat"
+                    value={otherParams.categoryId}
+                    onChange={(e) => setOtherParams((p) => ({ ...p, categoryId: e.target.value }))}
+                    className={`${inputCls} bg-white h-[42px]`}
+                  >
+                    <option value="">All categories</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
 
-            {reportType === 'low-stock' && (
-              <Field label="Low Stock Threshold (blank = each product's own alert level)" htmlFor="r-th">
-                <input
-                  id="r-th"
-                  type="number"
-                  min="0"
-                  placeholder="Each product's alert level"
-                  value={otherParams.threshold}
-                  onChange={(e) => setOtherParams((p) => ({ ...p, threshold: e.target.value === '' ? '' : Number(e.target.value) }))}
-                  className={inputCls}
-                />
-              </Field>
-            )}
+              {reportType === 'low-stock' && (
+                <Field label="Low Stock Threshold (blank = each product's own alert level)" htmlFor="r-th">
+                  <input
+                    id="r-th"
+                    type="number"
+                    min="0"
+                    placeholder="Each product's alert level"
+                    value={otherParams.threshold}
+                    onChange={(e) => setOtherParams((p) => ({ ...p, threshold: e.target.value === '' ? '' : Number(e.target.value) }))}
+                    className={inputCls}
+                  />
+                </Field>
+              )}
 
-            <Field label="Recipient Email Address" required htmlFor="r-to">
-              <input
-                id="r-to"
-                type="email"
-                required
-                value={emailTo}
-                onChange={(e) => setEmailTo(e.target.value)}
-                className={inputCls}
-                placeholder="manager@store.com"
-              />
-            </Field>
-          </div>
+              {DATE_REPORTS.includes(reportType) && (
+                <>
+                  <Field label="Invoice date from (blank = all)" htmlFor="r-from">
+                    <input id="r-from" type="date" value={otherParams.from} onChange={(e) => setOtherParams((p) => ({ ...p, from: e.target.value }))} className={inputCls} />
+                  </Field>
+                  <Field label="Invoice date to" htmlFor="r-until">
+                    <input
+                      id="r-until"
+                      type="date"
+                      min={otherParams.from || undefined}
+                      value={otherParams.until}
+                      onChange={(e) => setOtherParams((p) => ({ ...p, until: e.target.value }))}
+                      className={inputCls}
+                    />
+                  </Field>
+                </>
+              )}
+            </div>
 
-          <div className="flex justify-end pt-2">
-            {can('reports', 'create') ? (
-              <SubmitButton isLoading={sendingEmail} icon={<Mail size={16} />}>
-                {sendingEmail ? 'Generating & Emailing...' : 'Email PDF + CSV Report'}
-              </SubmitButton>
+            {canSend[reportType] ? (
+              <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-4">
+                <div className="flex-1 min-w-[220px]">
+                  <Field label="Email it to" required htmlFor="r-to">
+                    <input
+                      id="r-to"
+                      type="email"
+                      required
+                      value={emailTo}
+                      onChange={(e) => setEmailTo(e.target.value)}
+                      className={inputCls}
+                      placeholder="manager@store.com"
+                    />
+                  </Field>
+                </div>
+                <SubmitButton isLoading={sendingEmail} icon={<Mail size={16} />}>
+                  {sendingEmail ? 'Generating & Emailing...' : 'Email PDF + CSV Report'}
+                </SubmitButton>
+              </div>
             ) : (
-              <p className="text-sm text-gray-500">Your role can view reports but cannot send emails.</p>
+              <p className="text-sm text-gray-500 border-t border-gray-100 pt-4">Your role can view this report but can't email it.</p>
             )}
-          </div>
-        </form>
+          </form>
+
+          <ReportResult view={view} loading={loadingView} />
+        </div>
       )}
 
       {/* Email Report Modal for Sales Report */}

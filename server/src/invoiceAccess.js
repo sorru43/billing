@@ -1,5 +1,18 @@
 import { query } from './db.js';
 import { can } from './auth.js';
+import { invoiceSlug } from './modules.js';
+
+// Rights per invoice status (modules.js): "unpaid" covers unpaid and part-paid, "paid" is paid in full.
+export const canOnInvoice = (req, status, action) => can(req, invoiceSlug(status), action);
+// The statuses whose invoices this user may see; `only` ('unpaid' | 'paid') narrows it (list tabs).
+export function visibleStatuses(req, only) {
+  const out = [];
+  if ((!only || only === 'unpaid') && can(req, 'invoices_unpaid', 'view')) out.push('unpaid', 'partial');
+  if ((!only || only === 'paid') && can(req, 'invoices_paid', 'view')) out.push('paid');
+  return out;
+}
+export const noAccessMessage = (status, action = 'open') =>
+  `Your role can't ${action} ${status === 'paid' ? 'paid' : 'unpaid'} invoices`;
 
 // Cashier invoice lock.
 // Staff whose role lacks "See past invoices" (module invoice_history) can open an invoice only

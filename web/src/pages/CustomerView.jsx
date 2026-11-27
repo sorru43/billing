@@ -184,7 +184,7 @@ export default function CustomerView() {
                 <th className={th}>Due</th>
                 <th className={`${th} text-right`}>Amount</th>
                 <th className={th}>Status</th>
-                {can('invoices', 'edit') && <th className={th}>Action</th>}
+                {(can('invoices_unpaid', 'edit') || can('invoices_paid', 'edit')) && <th className={th}>Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -200,9 +200,10 @@ export default function CustomerView() {
                     )}
                   </td>
                   <td className={td}><StatusBadge status={inv.status} /></td>
-                  {can('invoices', 'edit') && (
+                  {(can('invoices_unpaid', 'edit') || can('invoices_paid', 'edit')) && (
                     <td className={td}>
                       {inv.status === 'unpaid' || inv.status === 'partial' ? (
+                        can('invoices_unpaid', 'edit') &&
                         <button onClick={() => setPayingInvoice(inv)} className="flex items-center gap-1 text-emerald-700 hover:underline cursor-pointer">
                           <CircleCheckBig size={14} /> Mark Paid
                         </button>

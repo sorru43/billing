@@ -12,6 +12,7 @@ import { rememberPrices, autoRates } from '../customerPrices.js';
 import { returnMoney } from '../returnMoney.js';
 import {
   LOCKED_MESSAGE, seesAllInvoices, lockState, openWindow, closeAfterPrint, requestAccess, decideRequest, pendingRequests, hasOpenWindow,
+  canOnInvoice, visibleStatuses, noAccessMessage,
 } from '../invoiceAccess.js';
 
 const r = Router();
@@ -177,12 +178,16 @@ async function resolveCustomer(client, b) {
   return m.length === 1 ? m[0].id : null;
 }
 
-// Staff who may make invoices but not see the invoice list (create-only cashiers) can still print
-// the one they just made: only while their own window on it is open (invoiceAccess.js).
-async function canOpenInvoice(req, invoiceId) {
-  if (can(req, 'invoices', 'view')) return (await lockState(req, invoiceId)).open;
-  return can(req, 'invoices', 'create') && hasOpenWindow(invoiceId, req.user.id);
+// Opening, printing or emailing one invoice. Its creator (and anyone an admin approved) holds an open
+// window on it (invoiceAccess.js) and may, even without View on its status: a create-only cashier
+// prints the invoice they just made. Everyone else needs View on its status (Unpaid / Paid) and, if
+// locked out of past invoices, an open window too.
+async function canOpenInvoice(req, inv) {
+  if (await hasOpenWindow(inv.id, req.user.id)) return true;
+  if (!canOnInvoice(req, inv.status, 'view')) return false;
+  return (await lockState(req, inv.id)).open;
 }
+const openFailMessage = (req, inv) => (canOnInvoice(req, inv.status, 'view') ? LOCKED_MESSAGE : noAccessMessage(inv.status));
 const viewOrCreate = (req, res, next) =>
   can(req, 'invoices', 'view') || can(req, 'invoices', 'create') ? next() : fail(res, 403, 'You do not have permission to do this');
 
@@ -197,9 +202,12 @@ async function nextNumber(client, peek) {
 
 r.get('/', requirePerm('invoices', 'view'), h(async (req, res) => {
   const { limit, page, offset, search } = paging(req);
+  // Only the statuses this role may see (Unpaid / Paid rows); ?status=unpaid|paid narrows it further.
+  const only = ['unpaid', 'paid'].includes(req.query.status) ? req.query.status : null;
+  const statuses = visibleStatuses(req, only);
   if (seesAllInvoices(req)) {
-    const where = search ? `WHERE invoice_number ILIKE $1 OR customer_name ILIKE $1 OR customer_email ILIKE $1` : '';
-    const params = search ? [likeEscape(search)] : [];
+    const where = `WHERE status = ANY($1::text[])${search ? ' AND (invoice_number ILIKE $2 OR customer_name ILIKE $2 OR customer_email ILIKE $2)' : ''}`;
+    const params = search ? [statuses, likeEscape(search)] : [statuses];
     const total = (await query(`SELECT count(*)::int n FROM invoices ${where}`, params)).rows[0].n;
     const { rows } = await query(`SELECT * FROM invoices ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`, params);
     return ok(res, { invoices: rows.map(listOut), pagination: pagination(total, page, limit) });
@@ -207,11 +215,11 @@ r.get('/', requirePerm('invoices', 'view'), h(async (req, res) => {
   // Locked-out cashier: invoices they hold an open window for in full, the rest as number + customer only.
   const like = search ? likeEscape(search) : null;
   const total = (await query(
-    `SELECT count(*)::int n FROM invoices i ${search ? 'WHERE i.invoice_number ILIKE $1 OR i.customer_name ILIKE $1' : ''}`,
-    search ? [like] : [],
+    `SELECT count(*)::int n FROM invoices i WHERE i.status = ANY($1::text[]) ${search ? 'AND (i.invoice_number ILIKE $2 OR i.customer_name ILIKE $2)' : ''}`,
+    search ? [statuses, like] : [statuses],
   )).rows[0].n;
-  const where = search ? `WHERE i.invoice_number ILIKE $2 OR i.customer_name ILIKE $2` : '';
-  const params = search ? [req.user.id, like] : [req.user.id];
+  const where = `WHERE i.status = ANY($2::text[])${search ? ' AND (i.invoice_number ILIKE $3 OR i.customer_name ILIKE $3)' : ''}`;
+  const params = search ? [req.user.id, statuses, like] : [req.user.id, statuses];
   const { rows } = await query(
     `SELECT i.*, a.status AS access_status, (a.status = 'approved' AND a.view_until > now()) AS access_open
        FROM invoices i LEFT JOIN invoice_access a ON a.invoice_id = i.id AND a.user_id = $1
@@ -241,6 +249,10 @@ r.get('/:id', requirePerm('invoices', 'view'), h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
+  // No View on this status (Unpaid / Paid): only its own creator's open window lets them in.
+  if (!canOnInvoice(req, rows[0].status, 'view') && !(await hasOpenWindow(rows[0].id, req.user.id))) {
+    return fail(res, 403, noAccessMessage(rows[0].status));
+  }
   const lock = await lockState(req, rows[0].id);
   if (!lock.open) return ok(res, lockedOut(rows[0], lock.request));
   ok(res, { ...fullOut(rows[0]), locked: false, access: lock.restricted ? { viewUntil: lock.viewUntil } : null });
@@ -250,7 +262,7 @@ r.get('/:id/pdf', viewOrCreate, h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
-  if (!(await canOpenInvoice(req, rows[0].id))) return fail(res, 403, LOCKED_MESSAGE);
+  if (!(await canOpenInvoice(req, rows[0]))) return fail(res, 403, openFailMessage(req, rows[0]));
   const pdf = await invoicePdf(rows[0], await getSetting('company'));
   await closeAfterPrint(req, rows[0].id); // a PDF download counts as printing it
   res.set({
@@ -426,6 +438,7 @@ r.patch('/:id/status', requirePerm('invoices', 'edit'), h(async (req, res) => {
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
   const inv = rows[0];
+  if (!canOnInvoice(req, inv.status, 'edit')) return fail(res, 403, noAccessMessage(inv.status, 'take payments on'));
 
   const total = Number(inv.total);
   const currentPaid = Number(inv.paid_amount) || 0;
@@ -500,6 +513,7 @@ r.get('/:id/edit', requirePerm('invoices', 'edit'), h(async (req, res) => {
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
   const inv = rows[0];
+  if (!canOnInvoice(req, inv.status, 'edit')) return fail(res, 403, noAccessMessage(inv.status, 'edit'));
   if (!(await lockState(req, inv.id)).open) return fail(res, 403, LOCKED_MESSAGE);
   const returned = await returnsFor({ query }, inv.id);
   if (returned.length) return fail(res, 422, `Invoice ${inv.invoice_number} has returns (${returned.join(', ')}), so it can't be edited`);
@@ -520,6 +534,7 @@ r.put('/:id', requirePerm('invoices', 'edit'), h(async (req, res) => {
   const result = await tx(async (client) => {
     const inv = (await client.query(`SELECT * FROM invoices WHERE id=$1 FOR UPDATE`, [req.params.id])).rows[0];
     if (!inv) return { status: 404, message: 'Invoice not found' };
+    if (!canOnInvoice(req, inv.status, 'edit')) return { status: 403, message: noAccessMessage(inv.status, 'edit') };
     if (!(await lockState(req, inv.id)).open) return { status: 403, message: LOCKED_MESSAGE };
     const returned = await returnsFor(client, inv.id);
     if (returned.length) return { status: 422, message: `Invoice ${inv.invoice_number} has returns (${returned.join(', ')}), so it can't be edited` };
@@ -615,7 +630,7 @@ r.post('/:id/email', requirePerm('invoices', 'view'), h(async (req, res) => {
   if (!to.success) return fail(res, 422, 'Enter a valid email address', { to: 'Enter a valid email address' });
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
-  if (!(await lockState(req, rows[0].id)).open) return fail(res, 403, LOCKED_MESSAGE);
+  if (!(await canOpenInvoice(req, rows[0]))) return fail(res, 403, openFailMessage(req, rows[0]));
   try {
     await invoiceEmail(rows[0], to.data, { archive: false });
   } catch (e) {
@@ -628,7 +643,9 @@ r.post('/:id/email', requirePerm('invoices', 'view'), h(async (req, res) => {
 // The Print button calls this before opening the print dialog: a locked-out cashier's window closes.
 r.post('/:id/printed', viewOrCreate, h(async (req, res) => {
   if (!isUuid(req.params.id)) return fail(res, 404, 'Invoice not found');
-  if (!(await canOpenInvoice(req, req.params.id))) return fail(res, 403, LOCKED_MESSAGE);
+  const inv = (await query(`SELECT id, status FROM invoices WHERE id=$1`, [req.params.id])).rows[0];
+  if (!inv) return fail(res, 404, 'Invoice not found');
+  if (!(await canOpenInvoice(req, inv))) return fail(res, 403, openFailMessage(req, inv));
   await closeAfterPrint(req, req.params.id);
   ok(res, null, 'Printed');
 }));
@@ -660,6 +677,7 @@ r.delete('/:id', requirePerm('invoices', 'delete'), h(async (req, res) => {
   const { rows } = await query(`SELECT * FROM invoices WHERE id=$1`, [req.params.id]);
   if (!rows.length) return fail(res, 404, 'Invoice not found');
   const inv = rows[0];
+  if (!canOnInvoice(req, inv.status, 'delete')) return fail(res, 403, noAccessMessage(inv.status, 'delete'));
   if (!(await lockState(req, inv.id)).open) return fail(res, 403, LOCKED_MESSAGE);
 
   // Mark sales ledger record as deleted invoice, keeping the sale value permanently recorded

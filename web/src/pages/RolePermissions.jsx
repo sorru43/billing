@@ -82,7 +82,10 @@ export default function RolePermissions() {
         <p className="font-bold text-gray-950 p-4 flex-1">Role Name: {role.roleName}</p>
       </div>
       <form onSubmit={submit}>
-        {modules.map((g) => (
+        {modules.map((g) => {
+          // Only the columns some row of this group uses, named by the group (Reports: "Send by Email").
+          const cols = ACTIONS.filter((a) => g.children.some((c) => actionsOf(c).includes(a)));
+          return (
           <div key={g.moduleName} className="permissions mb-6">
             <div className="bg-white shadow-sm rounded-xl border border-gray-200">
               <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
@@ -96,7 +99,7 @@ export default function RolePermissions() {
                 <table className="w-full border-collapse">
                   <thead>
                     <tr className="text-sm text-gray-600 font-semibold text-left">
-                      {['MODULE', 'CREATE', 'EDIT', 'DELETE', 'VIEW', 'ALLOW ALL'].map((h) => (
+                      {['MODULE', ...cols.map((a) => (g.labels?.[a] || a).toUpperCase()), 'ALLOW ALL'].map((h) => (
                         <th key={h} className="px-4 py-3 font-semibold">
                           {h}
                         </th>
@@ -112,7 +115,7 @@ export default function RolePermissions() {
                             {m.moduleName}
                             {m.note && <span className="block text-xs font-normal text-gray-500">{m.note}</span>}
                           </td>
-                          {ACTIONS.map((a) => (
+                          {cols.map((a) => (
                             <td key={a} className="px-4 py-3">
                               {actionsOf(m).includes(a) && <Checkbox checked={p[a]} onChange={() => toggle(m, a)} disabled={!editable} />}
                             </td>
@@ -128,7 +131,8 @@ export default function RolePermissions() {
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
         <div className="flex justify-end mt-4">
           <button
             type="button"

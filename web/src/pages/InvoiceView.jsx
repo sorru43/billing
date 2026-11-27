@@ -68,6 +68,8 @@ export default function InvoiceView() {
   const [printed, setPrinted] = useState(false); // a locked-out cashier just printed / downloaded / emailed it
 
   const isAdmin = user?.user_type === 1;
+  // Rights per status (Role Permissions: Unpaid / Paid invoices). Part-paid counts as unpaid.
+  const statusSlug = inv?.status === 'paid' ? 'invoices_paid' : 'invoices_unpaid';
   // Set for cashiers without "See past invoices": the invoice locks for them on first print.
   const restricted = Boolean(inv?.access);
 
@@ -148,12 +150,12 @@ export default function InvoiceView() {
           <button onClick={() => setEmailing(true)} className={`${btn} bg-purple-600 text-white hover:bg-gray-950`}>
             <Mail size={16} /> Email
           </button>
-          {can('invoices', 'edit') && (
+          {can(statusSlug, 'edit') && (
             <button onClick={() => navigate(`/admin/invoices/edit/${id}`)} className={`${btn} border border-gray-300 text-gray-700 hover:bg-gray-50`}>
               <Pencil size={16} /> Edit
             </button>
           )}
-          {can('invoices', 'edit') && (
+          {can(statusSlug, 'edit') && (
             inv.status === 'paid' ? (
               isAdmin && (
                 <button
@@ -172,7 +174,7 @@ export default function InvoiceView() {
               </button>
             )
           )}
-          {(isAdmin || can('invoices', 'delete')) && (
+          {can(statusSlug, 'delete') && (
             <button
               onClick={handleDelete}
               className={`${btn} bg-red-50 text-red-600 border border-red-200 hover:bg-red-100`}
@@ -203,7 +205,9 @@ export default function InvoiceView() {
         </div>
       )}
 
-      <div className="bg-white border border-gray-200 rounded-lg p-6 md:p-8 space-y-6">
+      {/* On paper (index.css "invoice-sheet"): the wide layout, and at least one full A4 page tall with the
+          notes and totals at the bottom of the sheet. */}
+      <div className="invoice-sheet bg-white border border-gray-200 rounded-lg p-6 md:p-8 space-y-6">
         <div className="flex justify-between items-start">
           <Logo kind="invoice" className="w-36" />
           <div className="text-right">
@@ -217,7 +221,7 @@ export default function InvoiceView() {
             </div>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+        <div className="grid grid-cols-1 md:grid-cols-3 print:grid-cols-3 gap-4 text-sm">
           <div>
             <h3 className="font-bold text-purple-600 mb-1">Bill From</h3>
             <p className="font-semibold text-gray-950">{company.companyName}</p>
@@ -228,7 +232,7 @@ export default function InvoiceView() {
             <p className="font-semibold text-gray-950">{inv.customerName}</p>
             <p className="text-gray-600 whitespace-pre-line">{[inv.customerAddress, inv.customerEmail, inv.customerPhone].filter(Boolean).join('\n')}</p>
           </div>
-          <div className="md:text-right text-gray-600 space-y-0.5">
+          <div className="md:text-right print:text-right text-gray-600 space-y-0.5">
             <p>
               <span className="font-semibold text-gray-950">Invoice Date:</span> {formatDate(inv.invoiceDate)}
             </p>
@@ -240,7 +244,7 @@ export default function InvoiceView() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-black text-white text-left">
+              <tr className="print-exact bg-black text-white text-left">
                 <th className="px-3 py-2">Item</th>
                 <th className="px-3 py-2">Description</th>
                 <th className="px-3 py-2 text-right">Quantity</th>
@@ -264,8 +268,8 @@ export default function InvoiceView() {
             </tbody>
           </table>
         </div>
-        <div className="flex flex-col md:flex-row justify-between gap-6">
-          <div className="text-sm text-gray-600 md:max-w-md">
+        <div className="invoice-bottom flex flex-col md:flex-row print:flex-row justify-between gap-6">
+          <div className="text-sm text-gray-600 md:max-w-md print:max-w-md">
             {inv.notes && (
               <>
                 <h3 className="font-bold text-gray-950 mb-1">Notes</h3>
@@ -273,7 +277,7 @@ export default function InvoiceView() {
               </>
             )}
           </div>
-          <div className="w-full md:w-72 text-sm space-y-2">
+          <div className="w-full md:w-72 print:w-72 text-sm space-y-2">
             <div className="flex justify-between border-t-2 border-gray-950 pt-2 text-lg font-bold text-gray-950">
               <span>Invoice Total</span>
               <span>{money(inv.total)}</span>

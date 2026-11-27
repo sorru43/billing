@@ -44,5 +44,8 @@ export function useList(endpoint, key, filters = []) {
     setSearch: (v) => set({ search: v, page: '1' }),
     setLimit: (v) => set({ limit: String(v), page: '1' }),
     setPage: (v) => set({ page: String(v) }),
+    // one of the extra URL filters (blank = no filter); back to page 1
+    filter: (k) => params.get(k) || '',
+    setFilter: (k, v) => set({ [k]: v, page: '1' }),
   };
 }

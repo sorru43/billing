@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requirePerm, can } from '../auth.js';
+import { visibleStatuses } from '../invoiceAccess.js';
 import { h, ok } from '../http.js';
 import { ALERT_SQL } from '../stock.js';
 
@@ -19,12 +20,15 @@ r.get('/', requirePerm('dashboard', 'view'), h(async (req, res) => {
   }
   if (can(req, 'categories', 'view')) data.categories = (await one(`SELECT count(*)::int total FROM categories`)).total;
   // Sales figures and recent invoices are hidden from cashiers who can't open past invoices.
+  // Only the invoices this role may see (Unpaid / Paid rows).
   if (can(req, 'invoices', 'view') && can(req, 'invoice_history', 'view')) {
-    data.invoices = await one(`SELECT count(*)::int total, COALESCE(sum(total),0) amount,
+    const statuses = visibleStatuses(req);
+    data.invoices = (await query(`SELECT count(*)::int total, COALESCE(sum(total),0) amount,
         COALESCE(sum(total) FILTER (WHERE status='paid'),0) paid
-      FROM invoices`);
+      FROM invoices WHERE status = ANY($1::text[])`, [statuses])).rows[0];
     data.recentInvoices = (await query(
-      `SELECT id, invoice_number, customer_name, total, status FROM invoices ORDER BY created_at DESC LIMIT 5`,
+      `SELECT id, invoice_number, customer_name, total, status FROM invoices WHERE status = ANY($1::text[]) ORDER BY created_at DESC LIMIT 5`,
+      [statuses],
     )).rows;
   }
   if (can(req, 'users', 'view')) data.users = (await one(`SELECT count(*)::int total FROM users WHERE user_type=2`)).total;

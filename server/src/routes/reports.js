@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
-import { requirePerm } from '../auth.js';
+import { requirePerm, can } from '../auth.js';
+import { REPORT_SLUGS } from '../modules.js';
 import { h, ok, fail, validate, isoDate, isIsoDate, isUuid, BAD_DATE } from '../http.js';
 import { getSetting } from '../settings.js';
 import { ALERT_SQL } from '../stock.js';
@@ -15,6 +16,8 @@ const r = Router();
 
 export const REPORT_TYPES = {
   sales: 'Sales Report',
+  unpaid: 'Unpaid Invoices Report',
+  paid: 'Paid Invoices Report',
   inventory: 'Inventory Report',
   'low-stock': 'Low Stock Report',
   'out-of-stock': 'Out of Stock Report',
@@ -30,6 +33,12 @@ const schema = z.object({
   // blank = each product's own low stock alert level
   threshold: z.preprocess((v) => (v === '' || v == null ? null : v), z.coerce.number().int().min(0).max(1e6).nullable()).default(null),
 });
+
+// The report options without the recipient: what GET /view takes.
+const viewSchema = schema.omit({ to: true });
+
+// Each report has its own role permission (modules.js): View = see it on screen, create = Send by Email.
+const mayReport = (req, type, action) => can(req, REPORT_SLUGS[type], action);
 
 const n2 = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const r2 = (n) => Math.round(Number(n) * 100) / 100;
@@ -108,6 +117,90 @@ async function build(b, sym) {
     };
   }
 
+  // What customers still owe now: every invoice not fully paid (part-paid included), oldest first.
+  // Optional dates limit it by invoice date.
+  if (b.type === 'unpaid') {
+    const params = [];
+    let where = `WHERE i.status <> 'paid'`;
+    if (b.from) { params.push(b.from); where += ` AND i.invoice_date >= $${params.length}`; }
+    if (b.until) { params.push(b.until); where += ` AND i.invoice_date <= $${params.length}`; }
+    const { rows } = await query(
+      `SELECT i.invoice_number, i.invoice_date, i.due_date, i.customer_name, i.total, coalesce(i.paid_amount, 0) AS paid,
+              CASE WHEN i.due_date < CURRENT_DATE THEN CURRENT_DATE - i.due_date ELSE 0 END AS days_late
+         FROM invoices i ${where}
+        ORDER BY i.invoice_date, i.created_at`,
+      params,
+    );
+    const total = rows.reduce((a, i) => a + Number(i.total), 0);
+    const paid = rows.reduce((a, i) => a + Number(i.paid), 0);
+    return {
+      subtitle: `Invoices still owed${b.from || b.until ? ` · invoice date ${b.from || 'any'} → ${b.until || 'today'}` : ' · all dates'}`,
+      summary: [
+        { label: 'Unpaid Invoices', value: rows.length },
+        { label: 'Invoiced', value: money(total) },
+        { label: 'Paid So Far', value: money(paid) },
+        { label: 'Still Owed', value: money(total - paid) },
+      ],
+      columns: [
+        { key: 'number', label: 'Invoice ID', width: 14 },
+        { key: 'date', label: 'Date', width: 11 },
+        { key: 'due', label: 'Due', width: 11 },
+        { key: 'customer', label: 'Customer', width: 24 },
+        { key: 'total', label: 'Total', width: 12, align: 'right' },
+        { key: 'paid', label: 'Paid', width: 12, align: 'right' },
+        { key: 'owed', label: 'Owed', width: 12, align: 'right' },
+        { key: 'late', label: 'Days Late', width: 9, align: 'right' },
+      ],
+      rows: rows.map((i) => ({
+        number: i.invoice_number,
+        date: String(i.invoice_date).slice(0, 10),
+        due: i.due_date ? String(i.due_date).slice(0, 10) : '-',
+        customer: i.customer_name,
+        total: money(i.total),
+        paid: money(i.paid),
+        owed: money(Number(i.total) - Number(i.paid)),
+        late: i.days_late > 0 ? i.days_late : '',
+      })),
+    };
+  }
+
+  // Invoices paid in full, from the permanent sales record (so archived or deleted ones still count).
+  // Optional dates limit it by invoice date.
+  if (b.type === 'paid') {
+    const params = [];
+    let where = `WHERE csr.status = 'paid'`;
+    if (b.from) { params.push(b.from); where += ` AND csr.invoice_date >= $${params.length}`; }
+    if (b.until) { params.push(b.until); where += ` AND csr.invoice_date <= $${params.length}`; }
+    const { rows } = await query(
+      `SELECT csr.invoice_number, csr.invoice_date, csr.customer_name, csr.total, csr.paid_amount
+         FROM customer_sales_records csr ${where}
+        ORDER BY csr.invoice_date DESC, csr.created_at DESC`,
+      params,
+    );
+    const total = rows.reduce((a, i) => a + Number(i.total), 0);
+    return {
+      subtitle: `Invoices paid in full${b.from || b.until ? ` · invoice date ${b.from || 'any'} → ${b.until || 'today'}` : ' · all dates'}`,
+      summary: [
+        { label: 'Paid Invoices', value: rows.length },
+        { label: 'Total', value: money(total) },
+      ],
+      columns: [
+        { key: 'number', label: 'Invoice ID', width: 16 },
+        { key: 'date', label: 'Date', width: 12 },
+        { key: 'customer', label: 'Customer', width: 34 },
+        { key: 'total', label: 'Total', width: 14, align: 'right' },
+        { key: 'paid', label: 'Paid', width: 14, align: 'right' },
+      ],
+      rows: rows.map((i) => ({
+        number: i.invoice_number,
+        date: String(i.invoice_date).slice(0, 10),
+        customer: i.customer_name,
+        total: money(i.total),
+        paid: money(i.paid_amount),
+      })),
+    };
+  }
+
   const extra = { inventory: '', 'price-list': 'AND p.status = true', 'low-stock': `AND p.quantity > 0 AND p.quantity <= ${b.threshold == null ? ALERT_SQL : b.threshold}`, 'out-of-stock': 'AND p.quantity <= 0' }[b.type];
   const { rows } = await query(productSql(extra));
 
@@ -161,12 +254,24 @@ async function build(b, sym) {
 }
 
 r.get('/types', requirePerm('reports', 'view'), h(async (req, res) => {
-  ok(res, { types: REPORT_TYPES, defaultRecipient: req.user.email });
+  const types = Object.fromEntries(Object.entries(REPORT_TYPES).filter(([type]) => mayReport(req, type, 'view')));
+  const canSend = Object.fromEntries(Object.keys(REPORT_TYPES).map((type) => [type, mayReport(req, type, 'create')]));
+  ok(res, { types, canSend, defaultRecipient: req.user.email || '' });
+}));
+
+// Any report on screen (the Sales report has its own richer GET /sales).
+r.get('/view', requirePerm('reports', 'view'), h(async (req, res) => {
+  const b = validate(viewSchema, req.query, res);
+  if (!b) return;
+  if (!mayReport(req, b.type, 'view')) return fail(res, 403, `Your role can't open the ${REPORT_TYPES[b.type]}`);
+  const report = await build(b, '$');
+  ok(res, { title: REPORT_TYPES[b.type], ...report });
 }));
 
 // Sales report endpoint with total sale value, date filters (today default, 7, month, custom)
 // and permanent sales records retention even when invoices are deleted.
 r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
+  if (!mayReport(req, 'sales', 'view')) return fail(res, 403, "Your role can't open the Sales Report");
   const pad = (n) => String(n).padStart(2, '0');
   const fmtDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
@@ -295,6 +400,7 @@ r.get('/sales', requirePerm('reports', 'view'), h(async (req, res) => {
 r.post('/send', requirePerm('reports', 'create'), h(async (req, res) => {
   const b = validate(schema, req.body, res);
   if (!b) return;
+  if (!mayReport(req, b.type, 'create')) return fail(res, 403, `Your role can't email the ${REPORT_TYPES[b.type]}`);
   const company = await getSetting('company');
   const report = await build(b, '$');
   const title = REPORT_TYPES[b.type];

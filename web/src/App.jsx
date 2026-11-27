@@ -27,6 +27,7 @@ import Returns from './pages/Returns.jsx';
 import ReturnCreate from './pages/ReturnCreate.jsx';
 import ReturnView from './pages/ReturnView.jsx';
 import Invoices from './pages/Invoices.jsx';
+import Payments from './pages/Payments.jsx';
 import InvoiceCreate from './pages/InvoiceCreate.jsx';
 import InvoiceView from './pages/InvoiceView.jsx';
 import Roles from './pages/Roles.jsx';
@@ -140,6 +141,7 @@ export default function App() {
               <Route path="invoices/create-invoice" element={g('invoices', <InvoiceCreate />, 'create')} />
               <Route path="invoices/view/:id" element={g('invoices', <InvoiceView />)} />
               <Route path="invoices/edit/:id" element={g('invoices', <InvoiceCreate />, 'edit')} />
+              <Route path="payments" element={g('payment_history', <Payments />)} />
               <Route
                 path="import-export"
                 element={

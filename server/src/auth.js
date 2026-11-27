@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { config } from './config.js';
 import { query } from './db.js';
-import { MODULE_SLUGS } from './modules.js';
+import { MODULE_SLUGS, INVOICE_STATUS_SLUGS, REPORT_SLUGS } from './modules.js';
 
 export const COOKIE = 'billing_session';
 const SESSION_HOURS = 12;
@@ -56,6 +56,17 @@ export async function loadPermissions(user) {
   for (const r of rows) {
     perms[r.module_slug] = { view: r.can_view, create: r.can_create, edit: r.can_edit, delete: r.can_delete };
   }
+  // Invoices are seen / edited / deleted per status (Unpaid, Paid rows), and reports per report. The
+  // pages and the general checks still ask for "invoices" and "reports": those come from the rows.
+  const any = (slugs, action) => slugs.some((s) => Boolean(perms[s]?.[action]));
+  perms.invoices = {
+    view: any(INVOICE_STATUS_SLUGS, 'view'),
+    create: Boolean(perms.invoices?.create),
+    edit: any(INVOICE_STATUS_SLUGS, 'edit'),
+    delete: any(INVOICE_STATUS_SLUGS, 'delete'),
+  };
+  const reportSlugs = Object.values(REPORT_SLUGS);
+  perms.reports = { view: any(reportSlugs, 'view'), create: any(reportSlugs, 'create'), edit: false, delete: false };
   return perms;
 }
 

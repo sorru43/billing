@@ -5,6 +5,7 @@ import { requirePerm, can } from '../auth.js';
 import { MODULE_GROUPS, MODULE_SLUGS } from '../modules.js';
 
 const CREATE_ONLY = new Set(MODULE_GROUPS.flatMap((g) => g.children).filter((m) => m.createOnly).map((m) => m.slug));
+const ACTIONS_OF = new Map(MODULE_GROUPS.flatMap((g) => g.children).map((m) => [m.slug, m.actions || ['view', 'create', 'edit', 'delete']]));
 import { h, ok, fail, validate, paging, pagination, isUuid, likeEscape } from '../http.js';
 
 const r = Router();
@@ -59,12 +60,15 @@ r.put('/:id/permissions', requirePerm('roles', 'edit'), h(async (req, res) => {
   if (!role) return fail(res, 404, 'Role not found');
   await tx(async (c) => {
     await c.query(`DELETE FROM role_permissions WHERE role_id=$1`, [req.params.id]);
-    for (const [slug, p] of Object.entries(perms)) {
+    for (const [slug, raw] of Object.entries(perms)) {
       if (!MODULE_SLUGS.includes(slug)) continue; // ignore unknown modules
+      // only the actions this row has (modules.js), e.g. no "edit" on a report
+      const has = ACTIONS_OF.get(slug);
+      const p = Object.fromEntries(['view', 'create', 'edit', 'delete'].map((a) => [a, Boolean(raw[a]) && has.includes(a)]));
       if (!(p.view || p.create || p.edit || p.delete)) continue;
       // Any right implies being able to see the module, except Create on a "createOnly" module
       // (invoices: a cashier who makes invoices without seeing the list).
-      const view = p.view || p.edit || p.delete || (p.create && !CREATE_ONLY.has(slug));
+      const view = has.includes('view') && (p.view || p.edit || p.delete || (p.create && !CREATE_ONLY.has(slug)));
       await c.query(
         `INSERT INTO role_permissions (role_id, module_slug, can_view, can_create, can_edit, can_delete) VALUES ($1,$2,$3,$4,$5,$6)`,
         [req.params.id, slug, view, p.create, p.edit, p.delete],

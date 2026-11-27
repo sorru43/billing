@@ -88,7 +88,14 @@ export default function Invoices() {
   const navigate = useNavigate();
   const { can, user } = useAuth();
   const money = useMoney();
-  const list = useList('/invoices', 'invoices');
+  const list = useList('/invoices', 'invoices', ['status']);
+  // Rights per status (Role Permissions: Unpaid / Paid invoices). Part-paid counts as unpaid.
+  const slugOf = (status) => (status === 'paid' ? 'invoices_paid' : 'invoices_unpaid');
+  const tabs = [
+    can('invoices_unpaid') && can('invoices_paid') && { value: '', label: 'All' },
+    can('invoices_unpaid') && { value: 'unpaid', label: 'Unpaid' },
+    can('invoices_paid') && { value: 'paid', label: 'Paid' },
+  ].filter(Boolean);
   const [emailing, setEmailing] = useState(null);
   const [payingInvoice, setPayingInvoice] = useState(null);
 
@@ -134,11 +141,11 @@ export default function Invoices() {
       : [
           { label: 'View', icon: <Eye size={14} />, onClick: () => navigate(`/admin/invoices/view/${inv.id}`) },
           { label: 'Email to Customer', icon: <Mail size={14} />, onClick: () => setEmailing(inv) },
-          can('invoices', 'edit') &&
+          can(slugOf(inv.status), 'edit') &&
             (inv.status === 'paid'
               ? (isAdmin && { label: 'Mark Unpaid (Admin)', icon: <Undo2 size={14} />, onClick: () => setStatus(inv, 'unpaid') })
               : { label: 'Mark Paid', icon: <CircleCheckBig size={14} />, onClick: () => setPayingInvoice(inv) }),
-          (isAdmin || can('invoices', 'delete')) && {
+          can(slugOf(inv.status), 'delete') && {
             label: 'Delete Invoice',
             icon: <Trash2 size={14} className="text-red-500" />,
             onClick: () => deleteInvoice(inv),
@@ -155,7 +162,24 @@ export default function Invoices() {
           <Lock size={12} /> Invoices lock after you print, download or email them (or 30 minutes after saving). Use Request access to open one again.
         </p>
       )}
-      <ListToolbar search={list.search} onSearch={list.setSearch} placeholder="Search by invoice ID or customer..." limit={list.limit} onLimit={list.setLimit} />
+      <ListToolbar search={list.search} onSearch={list.setSearch} placeholder="Search by invoice ID or customer..." limit={list.limit} onLimit={list.setLimit}>
+        {tabs.length > 1 && (
+          <div className="inline-flex rounded-md border border-gray-300 overflow-hidden self-start" role="tablist" aria-label="Invoice status">
+            {tabs.map((tab) => (
+              <button
+                key={tab.value}
+                type="button"
+                role="tab"
+                aria-selected={list.filter('status') === tab.value}
+                onClick={() => list.setFilter('status', tab.value)}
+                className={`px-4 py-2 text-sm font-semibold cursor-pointer ${list.filter('status') === tab.value ? 'bg-purple-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </ListToolbar>
       <Table headers={headers}>
         {!list.loading &&
           list.rows.map((inv, i) => (

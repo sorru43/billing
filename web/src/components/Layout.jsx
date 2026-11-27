@@ -1,7 +1,7 @@
 import { createContext, useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import {
-  ArrowDownUp, Box, PackagePlus, Undo2, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
+  ArrowDownUp, Box, PackagePlus, Undo2, Wallet, ChartNoAxesColumn, Contact, ChevronDown, CircleUserRound, House, KeyRound, LogOut, Menu, Plus, ReceiptText, Settings, ShieldHalf, UserRound,
 } from 'lucide-react';
 import { useAuth, Logo } from '../auth.jsx';
 import { useI18n, LanguageSelector } from '../i18n.jsx';
@@ -35,6 +35,7 @@ const MENU = [
     createKey: 'nav.new_invoice',
     createTitle: 'New Invoice',
   },
+  { type: 'link', to: '/admin/payments', icon: <Wallet size={16} />, key: 'nav.payment_history', title: 'Payment History', slug: 'payment_history' },
   { type: 'link', to: '/admin/returns', icon: <Undo2 size={16} />, key: 'nav.returns', title: 'Returns', slug: 'returns', addPath: '/admin/returns/new' },
   {
     type: 'collapsible',

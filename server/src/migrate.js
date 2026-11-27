@@ -434,6 +434,32 @@ DO $$ BEGIN
     ALTER TABLE users ADD CONSTRAINT users_login_ck CHECK (email IS NOT NULL OR username IS NOT NULL);
   END IF;
 END $$;
+
+-- 2026-11-27: role permissions per invoice status (Unpaid / Paid), for Payment History and per report
+-- (modules.js). Once, existing roles get the new rows matching what they could do before, so nobody
+-- loses access until an admin unticks something: Unpaid and Paid copy the old Invoices view / edit /
+-- delete, Payment History follows the old Invoices view, and each report copies the old Reports row.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM settings WHERE key = 'perm_split_2026_11_27') THEN
+    INSERT INTO role_permissions (role_id, module_slug, can_view, can_create, can_edit, can_delete)
+    SELECT rp.role_id, s.slug, rp.can_view, false, rp.can_edit, rp.can_delete
+      FROM role_permissions rp CROSS JOIN (VALUES ('invoices_unpaid'), ('invoices_paid')) AS s(slug)
+     WHERE rp.module_slug = 'invoices' AND (rp.can_view OR rp.can_edit OR rp.can_delete)
+    ON CONFLICT DO NOTHING;
+    INSERT INTO role_permissions (role_id, module_slug, can_view, can_create, can_edit, can_delete)
+    SELECT rp.role_id, 'payment_history', true, false, false, false
+      FROM role_permissions rp WHERE rp.module_slug = 'invoices' AND rp.can_view
+    ON CONFLICT DO NOTHING;
+    INSERT INTO role_permissions (role_id, module_slug, can_view, can_create, can_edit, can_delete)
+    SELECT rp.role_id, s.slug, rp.can_view, rp.can_create, false, false
+      FROM role_permissions rp
+      CROSS JOIN (VALUES ('report_sales'), ('report_unpaid'), ('report_paid'), ('report_inventory'),
+                         ('report_low_stock'), ('report_out_of_stock'), ('report_price_list')) AS s(slug)
+     WHERE rp.module_slug = 'reports' AND (rp.can_view OR rp.can_create)
+    ON CONFLICT DO NOTHING;
+    INSERT INTO settings (key, value) VALUES ('perm_split_2026_11_27', 'true');
+  END IF;
+END $$;
 `;
 
 // Keep every document-number sequence ahead of the numbers already used. Rows added without the
